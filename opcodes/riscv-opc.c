@@ -387,6 +387,7 @@ const struct riscv_opcode riscv_opcodes[] =
 {"sraw",       64, {"I", 0}, "d,s,<",   MATCH_SRAIW, MASK_SRAIW, match_opcode, INSN_ALIAS },
 {"subw",       64, {"C", 0}, "Cs,Cw,Ct",  MATCH_C_SUBW, MASK_C_SUBW, match_opcode, INSN_ALIAS },
 {"subw",       64, {"I", 0}, "d,s,t",  MATCH_SUBW, MASK_SUBW, match_opcode, 0 },
+{"myop",       0, {"I", 0}, "d",  MATCH_MYOP, MASK_MYOP, match_opcode, 0 },
 
 /* Atomic memory operation instruction subset */
 {"lr.w",         0, {"A", 0},   "d,0(s)",    MATCH_LR_W, MASK_LR_W | MASK_AQRL, match_opcode, INSN_DREF|INSN_4_BYTE },

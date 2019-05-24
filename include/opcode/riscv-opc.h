@@ -109,6 +109,8 @@
 #define MASK_ADDW  0xfe00707f
 #define MATCH_SUBW 0x4000003b
 #define MASK_SUBW  0xfe00707f
+#define MATCH_MYOP 0x0b
+#define MASK_MYOP  0xfffff07f
 #define MATCH_SLLW 0x103b
 #define MASK_SLLW  0xfe00707f
 #define MATCH_SRLW 0x503b

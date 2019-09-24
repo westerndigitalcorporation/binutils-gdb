@@ -855,6 +855,37 @@ static reloc_howto_type howto_table[] =
 	 0,				/* src_mask */
 	 MINUS_ONE,			/* dst_mask */
 	 FALSE),			/* pcrel_offset */
+
+  /* High 20 bits of overlay table offset.  */
+  HOWTO (R_RISCV_OVL_HI20,		/* type */
+	 0,				/* rightshift */
+	 2,				/* size */
+	 32,				/* bitsize */
+	 FALSE,				/* pc_relative */
+	 0,				/* bitpos */
+	 complain_overflow_signed,	/* complain_on_overflow */
+	 bfd_elf_generic_reloc,		/* special_function */
+	 "R_RISCV_OVL_HI20",		/* name */
+	 TRUE,				/* partial_inplace */
+	 0,				/* src_mask */
+	 ENCODE_UTYPE_IMM (-1U),	/* dst_mask */
+	 FALSE),			/* pcrel_offset */
+
+  /* Low 12 bits of overlay table offset.  */
+  HOWTO (R_RISCV_OVL_LO12_I,		/* type */
+	 0,				/* rightshift */
+	 2,				/* size */
+	 32,				/* bitsize */
+	 FALSE,				/* pc_relative */
+	 0,				/* bitpos */
+	 complain_overflow_signed,	/* complain_on_overflow */
+	 bfd_elf_generic_reloc,		/* special_function */
+	 "R_RISCV_OVL_LO12_I",		/* name */
+	 FALSE,				/* partial_inplace */
+	 0,				/* src_mask */
+	 ENCODE_ITYPE_IMM (-1U),	/* dst_mask */
+	 FALSE),			/* pcrel_offset */
+
 };
 
 /* A mapping from BFD reloc types to RISC-V ELF reloc types.  */
@@ -917,6 +948,8 @@ static const struct elf_reloc_map riscv_reloc_map[] =
   { BFD_RELOC_RISCV_SET16, R_RISCV_SET16 },
   { BFD_RELOC_RISCV_SET32, R_RISCV_SET32 },
   { BFD_RELOC_RISCV_32_PCREL, R_RISCV_32_PCREL },
+  { BFD_RELOC_RISCV_OVL_HI20, R_RISCV_OVL_HI20 },
+  { BFD_RELOC_RISCV_OVL_LO12_I, R_RISCV_OVL_LO12_I },
 };
 
 /* Given a BFD reloc type, return a howto structure.  */
@@ -950,14 +983,18 @@ riscv_reloc_name_lookup (bfd *abfd ATTRIBUTE_UNUSED, const char *r_name)
 reloc_howto_type *
 riscv_elf_rtype_to_howto (bfd *abfd, unsigned int r_type)
 {
-  if (r_type >= ARRAY_SIZE (howto_table))
+  unsigned int i;
+
+  for (i = 0; i < ARRAY_SIZE (howto_table); i++)
     {
-      (*_bfd_error_handler) (_("%pB: unsupported relocation type %#x"),
-			     abfd, r_type);
-      bfd_set_error (bfd_error_bad_value);
-      return NULL;
+      if (howto_table[i].type == r_type)
+	return &howto_table[i];
     }
-  return &howto_table[r_type];
+
+  (*_bfd_error_handler) (_("%pB: unsupported relocation type %#x"),
+			 abfd, r_type);
+  bfd_set_error (bfd_error_bad_value);
+  return NULL;
 }
 
 /* Special_function of RISCV_ADD and RISCV_SUB relocations.  */

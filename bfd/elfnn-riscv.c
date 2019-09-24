@@ -70,6 +70,11 @@ struct riscv_elf_link_hash_entry
 #define GOT_TLS_IE      4
 #define GOT_TLS_LE      8
   char tls_type;
+
+  /* Shortcuts to overlay sections.  */
+  asection *ovl_multigroup_tab;
+  asection *ovl_plt;
+  asection **ovl_groups;
 };
 
 #define riscv_elf_hash_entry(ent) \
@@ -107,6 +112,13 @@ struct riscv_elf_link_hash_table
 
   /* Short-cuts to get to dynamic linker sections.  */
   asection *sdyntdata;
+
+  /* Short-cuts to overlay sections.  */
+  asection *sovlmultigrptab;
+  asection *srelovlmultigrptab;
+  asection *sovlplt;
+  asection *srelovlplt;
+  asection **sovlgrp;
 
   /* Small local sym to section mapping cache.  */
   struct sym_cache sym_cache;
@@ -287,6 +299,122 @@ riscv_elf_link_hash_table_create (bfd *abfd)
   return &ret->elf.root;
 }
 
+/* Create the .ovlgrp.* sections.
+
+   These sections are empty until after all the relocations have been
+   resolved, at which point these sections will be populated from the
+   contents of the .ovlallfns section.  */
+
+static bfd_boolean
+riscv_elf_create_overlay_group_sections (bfd *abfd, struct bfd_link_info *info)
+{
+  flagword flags;
+  asection *s;
+  const struct elf_backend_data *bed = get_elf_backend_data (abfd);
+  struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
+
+  /* This function may be called more than once.  */
+  if (htab->sovlgrp != NULL)
+    return TRUE;
+
+  flags = bed->dynamic_sec_flags;
+
+  /* Allocate a list to hold sections for each group.  */
+  /* FIXME: Hardcoded to one section for now.  */
+  asection **group_sections;
+  group_sections
+    = bfd_malloc (1 * sizeof (*group_sections));
+  if (group_sections == NULL)
+    return FALSE;
+
+  /* Generate section for each group.  */
+  s = bfd_make_section_anyway_with_flags (abfd, ".ovlgrp.1", flags);
+  if (s == NULL
+      || !bfd_set_section_alignment (abfd, s, bed->s->log_file_align))
+    return FALSE;
+  /* FIXME: Figure out the correct size.  */
+  s->size = 512;
+  group_sections[0] = s;
+
+  htab->sovlgrp = group_sections;
+
+  return TRUE;
+}
+
+/* Create the .ovlmultigrptab section, and .rela.ovlmultigrptab.  */
+
+static bfd_boolean
+riscv_elf_create_overlay_multigroup_table_section (bfd *abfd, struct bfd_link_info *info)
+{
+  flagword flags;
+  asection *s;
+  const struct elf_backend_data *bed = get_elf_backend_data (abfd);
+  struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
+
+  /* This function may be called more than once.  */
+  if (htab->sovlmultigrptab != NULL)
+    return TRUE;
+
+  flags = bed->dynamic_sec_flags;
+
+  s = bfd_make_section_anyway_with_flags (abfd,
+					  (bed->rela_plts_and_copies_p
+					   ? ".rela.ovlmultigrptab" : ".rel.ovlmultigrptab"),
+					  (bed->dynamic_sec_flags
+					   | SEC_READONLY));
+  if (s == NULL
+      || ! bfd_set_section_alignment (abfd, s, bed->s->log_file_align))
+    return FALSE;
+  htab->srelovlmultigrptab = s;
+
+  s = bfd_make_section_anyway_with_flags (abfd, ".ovlmultigrptab", flags);
+  if (s == NULL
+      || !bfd_set_section_alignment (abfd, s, bed->s->log_file_align))
+    return FALSE;
+  /* FIXME: Figure out the correct size.  */
+  s->size = 512;
+  htab->sovlmultigrptab = s;
+
+  return TRUE;
+}
+
+/* Create the .ovlplt section, and .rela.ovlplt.  */
+
+static bfd_boolean
+riscv_elf_create_overlay_plt_section (bfd *abfd, struct bfd_link_info *info)
+{
+  flagword flags;
+  asection *s;
+  const struct elf_backend_data *bed = get_elf_backend_data (abfd);
+  struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
+
+  /* This function may be called more than once.  */
+  if (htab->sovlplt != NULL)
+    return TRUE;
+
+  flags = bed->dynamic_sec_flags;
+
+  s = bfd_make_section_anyway_with_flags (abfd,
+					  (bed->rela_plts_and_copies_p
+					   ? ".rela.ovlplt" : ".rel.ovlplt"),
+					  (bed->dynamic_sec_flags
+					   | SEC_READONLY));
+  if (s == NULL
+      || ! bfd_set_section_alignment (abfd, s, bed->s->log_file_align))
+    return FALSE;
+  htab->srelovlplt = s;
+
+  s = bfd_make_section_anyway_with_flags (abfd, ".ovlplt", flags);
+  if (s == NULL
+      || !bfd_set_section_alignment (abfd, s, bed->s->log_file_align))
+    return FALSE;
+  /* FIXME: Figure out the correct size.  */
+  s->size = 512;
+  htab->sovlplt = s;
+
+  return TRUE;
+}
+
 /* Create the .got section.  */
 
 static bfd_boolean
@@ -363,6 +491,15 @@ riscv_elf_create_dynamic_sections (bfd *dynobj,
 
   htab = riscv_elf_hash_table (info);
   BFD_ASSERT (htab != NULL);
+
+  if (!riscv_elf_create_overlay_group_sections (dynobj, info))
+    return FALSE;
+
+  if (!riscv_elf_create_overlay_multigroup_table_section (dynobj, info))
+    return FALSE;
+
+  if (!riscv_elf_create_overlay_plt_section (dynobj, info))
+    return FALSE;
 
   if (!riscv_elf_create_got_section (dynobj, info))
     return FALSE;
@@ -1405,6 +1542,52 @@ tpoff (struct bfd_link_info *info, bfd_vma address)
   return address - elf_hash_table (info)->tls_sec->vma - TP_OFFSET;
 }
 
+/* Return the relocation value for the token in the overlay system.  */
+
+static bfd_vma
+ovloff (struct bfd_link_info *info, bfd_vma address)
+{
+  asection *s, *all_overlay_fns_section;
+  for (s = info->output_bfd->sections; s != NULL; s = s->next)
+    {
+      if (strncmp (s->name, ".ovlallfns", 10) == 0)
+        break;
+    }
+  if (s == NULL)
+    {
+      (*_bfd_error_handler) (_("Missing .ovlallfns section"));
+      bfd_set_error (bfd_error_bad_value);
+      return 0;
+    }
+  all_overlay_fns_section = s;
+
+  /* Get the group for the symbol.  */
+  /* FIXME: Just hardcoded to 1 at the moment. Get from the .csv file.  */
+  /* FIXME: Check that the group ID will fit in the field.  */
+  bfd_vma group_id = 1;
+
+  /* The function offset is relative to the start of the group.  */
+  /* FIXME: Currently relative to the start of .text.ovlallfns.  */
+  /* FIXME: Check that the offset will fit in the field.  */
+  bfd_vma func_off = address - all_overlay_fns_section->vma;
+
+  /* +--------+------+----------+----------+---------+---------+
+     |  31    |30-29 |   28-27  |   26-17  |   16-1  |    0    |
+     +--------+------+----------+----------+---------+---------+
+     | Multi- | Heap | Reserved | Function | Overlay | Overlay |
+     | group  |  ID  |          | Offset   |  Group  | Address |
+     | Token  |      |          |          |   ID    |  Token  |
+     +--------+------+----------+----------+---------+---------+ */
+
+  bfd_vma token = 0;
+  token |= (0 & 0x1) << 31;           /* Multi-group token.  */
+  token |= (0 & 0x3) << 29;           /* Heap ID.  */
+  token |= (func_off & 0x3ff) << 17;  /* Function Offset.  */
+  token |= (group_id & 0xffff) << 1;  /* Overlay Group ID.  */
+  token |= (1 & 0x1) << 0;            /* Overlay Address Token.  */
+  return token;
+}
+
 /* Return the global pointer's value, or 0 if it is not in use.  */
 
 static bfd_vma
@@ -1441,6 +1624,7 @@ perform_relocation (const reloc_howto_type *howto,
     case R_RISCV_GOT_HI20:
     case R_RISCV_TLS_GOT_HI20:
     case R_RISCV_TLS_GD_HI20:
+    case R_RISCV_OVL_HI20:
       if (ARCH_SIZE > 32 && !VALID_UTYPE_IMM (RISCV_CONST_HIGH_PART (value)))
 	return bfd_reloc_overflow;
       value = ENCODE_UTYPE_IMM (RISCV_CONST_HIGH_PART (value));
@@ -1451,6 +1635,7 @@ perform_relocation (const reloc_howto_type *howto,
     case R_RISCV_TPREL_LO12_I:
     case R_RISCV_TPREL_I:
     case R_RISCV_PCREL_LO12_I:
+    case R_RISCV_OVL_LO12_I:
       value = ENCODE_ITYPE_IMM (value);
       break;
 
@@ -2292,6 +2477,15 @@ riscv_elf_relocate_section (bfd *output_bfd,
 	  unresolved_reloc = FALSE;
 	  break;
 
+	case R_RISCV_OVL_HI20:
+	  relocation = ovloff (info, relocation);
+	  break;
+
+	case R_RISCV_OVL_LO12_I:
+	  relocation = ovloff (info, relocation);
+	  break;
+
+
 	default:
 	  r = bfd_reloc_notsupported;
 	}
@@ -2412,6 +2606,32 @@ riscv_elf_finish_dynamic_symbol (bfd *output_bfd,
 {
   struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
   const struct elf_backend_data *bed = get_elf_backend_data (output_bfd);
+
+  if (htab->sovlmultigrptab != NULL)
+    {
+      /* We need to create an overlay table entry for this symbol.  */
+
+      /* Calculate the address of the overlay table entry.  */
+
+      /* Fill in the overlay group table entry itself.  */
+
+      /* Fill in the entry in the .rela.all_ovlfns section.  */
+    }
+
+  if (htab->sovlplt != NULL)
+    {
+      /* Need to create a stub to call this symbol.  */
+
+      /* Calculate the address of the stub.  */
+
+      /* Fill in the stub itself. */
+
+      /* Fill in the entry in .rela.stub to point to the overlay group table
+         entry.  */
+
+      /* Fill in the entry in the .rela.all_ovlfns section or .rela.text
+         to point to the stub.  */
+    }
 
   if (h->plt.offset != (bfd_vma) -1)
     {
@@ -2627,6 +2847,11 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 	  elf_section_data (splt->output_section)->this_hdr.sh_entsize
 	    = PLT_ENTRY_SIZE;
 	}
+    }
+
+  if (htab->sovlgrp)
+    {
+      /* copy contents from the .ovlallfns section.  */
     }
 
   if (htab->elf.sgotplt)

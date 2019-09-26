@@ -886,6 +886,50 @@ static reloc_howto_type howto_table[] =
 	 ENCODE_ITYPE_IMM (-1U),	/* dst_mask */
 	 FALSE),			/* pcrel_offset */
 
+  /* 32-bit PC relative.  */
+  HOWTO (R_RISCV_OVL32,			/* type */
+	 0,				/* rightshift */
+	 2,				/* size */
+	 32,				/* bitsize */
+	 FALSE,				/* pc_relative */
+	 0,				/* bitpos */
+	 complain_overflow_dont,	/* complain_on_overflow */
+	 bfd_elf_generic_reloc,		/* special_function */
+	 "R_RISCV_OVL32",		/* name */
+	 FALSE,				/* partial_inplace */
+	 0,				/* src_mask */
+	 MINUS_ONE,			/* dst_mask */
+	 FALSE),			/* pcrel_offset */
+
+  /* High 20 bits of the PLT entry for an overlay function.  */
+  HOWTO (R_RISCV_OVLPLT_HI20,		/* type */
+	 0,				/* rightshift */
+	 2,				/* size */
+	 32,				/* bitsize */
+	 FALSE,				/* pc_relative */
+	 0,				/* bitpos */
+	 complain_overflow_signed,	/* complain_on_overflow */
+	 bfd_elf_generic_reloc,		/* special_function */
+	 "R_RISCV_OVLPLT_HI20",		/* name */
+	 TRUE,				/* partial_inplace */
+	 0,				/* src_mask */
+	 ENCODE_UTYPE_IMM (-1U),	/* dst_mask */
+	 FALSE),			/* pcrel_offset */
+
+  /* Low 12 bits of the PLT entry for an overlay function.  */
+  HOWTO (R_RISCV_OVLPLT_LO12_I,		/* type */
+	 0,				/* rightshift */
+	 2,				/* size */
+	 32,				/* bitsize */
+	 FALSE,				/* pc_relative */
+	 0,				/* bitpos */
+	 complain_overflow_signed,	/* complain_on_overflow */
+	 bfd_elf_generic_reloc,		/* special_function */
+	 "R_RISCV_OVLPLT_LO12_I",		/* name */
+	 FALSE,				/* partial_inplace */
+	 0,				/* src_mask */
+	 ENCODE_ITYPE_IMM (-1U),	/* dst_mask */
+	 FALSE),			/* pcrel_offset */
 };
 
 /* A mapping from BFD reloc types to RISC-V ELF reloc types.  */
@@ -950,6 +994,8 @@ static const struct elf_reloc_map riscv_reloc_map[] =
   { BFD_RELOC_RISCV_32_PCREL, R_RISCV_32_PCREL },
   { BFD_RELOC_RISCV_OVL_HI20, R_RISCV_OVL_HI20 },
   { BFD_RELOC_RISCV_OVL_LO12_I, R_RISCV_OVL_LO12_I },
+  { BFD_RELOC_RISCV_OVLPLT_HI20, R_RISCV_OVLPLT_HI20 },
+  { BFD_RELOC_RISCV_OVLPLT_LO12_I, R_RISCV_OVLPLT_LO12_I },
 };
 
 /* Given a BFD reloc type, return a howto structure.  */

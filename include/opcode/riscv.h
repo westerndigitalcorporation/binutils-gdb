@@ -258,6 +258,7 @@ static const char * const riscv_pred_succ[16] =
 
 /* ABI names for selected x-registers.  */
 
+#define X_ZERO 0
 #define X_RA 1
 #define X_SP 2
 #define X_GP 3
@@ -266,6 +267,8 @@ static const char * const riscv_pred_succ[16] =
 #define X_T1 6
 #define X_T2 7
 #define X_T3 28
+#define X_T5 30
+#define X_T6 31
 
 #define NGPR 32
 #define NFPR 32

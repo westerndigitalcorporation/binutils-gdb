@@ -25,6 +25,8 @@ fragment <<EOF
 #include "elf/riscv.h"
 #include "elfxx-riscv.h"
 
+extern FILE * riscv_grouping_file;
+
 static void
 riscv_elf_before_allocation (void)
 {
@@ -85,6 +87,29 @@ riscv_create_output_section_statements (void)
 }
 
 EOF
+
+# Define some shell vars to insert bits of code into the standard elf
+# parse_args and list_options functions.
+#
+PARSE_AND_LIST_PROLOGUE='
+#define OPTION_GROUPING_FILE		301
+'
+
+PARSE_AND_LIST_LONGOPTS='
+  { "grouping-file", required_argument, NULL, OPTION_GROUPING_FILE },
+'
+
+PARSE_AND_LIST_OPTIONS='
+  fprintf (file, _("--grouping-file             Grouping file name\n"));
+'
+
+PARSE_AND_LIST_ARGS_CASES='
+    case OPTION_GROUPING_FILE:
+      riscv_grouping_file = fopen (optarg, FOPEN_RT);
+      if (riscv_grouping_file == NULL)
+	einfo (_("%F%P: cannot open grouping file %s\n"), optarg);
+      break;
+'
 
 LDEMUL_BEFORE_ALLOCATION=riscv_elf_before_allocation
 LDEMUL_AFTER_ALLOCATION=gld${EMULATION_NAME}_after_allocation

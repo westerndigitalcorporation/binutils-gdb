@@ -308,9 +308,35 @@ riscv_make_ovlplt_entry (struct bfd_link_info *info,
   return TRUE;
 }
 
+/* Linked list of overlay functions.  */
+
+struct riscv_ovl_functions
+{
+  char * name;
+  struct riscv_ovl_functions *next;
+};
+
+/* Hash entry storing the functions that belong to a group.
+
+   e.g. If FuncA, FuncC and FuncD belong to group 3, this is stored as:
+
+     entry->root.string = "3"
+     entry->root.hash   = hash("3")
+     entry->functions   = FuncA -> FuncC -> FuncD -> NULL
+*/
+
+struct riscv_ovl_group_to_func_hash_entry
+{
+  struct bfd_hash_entry root;
+  /* List of functions that belong to this group.  */
+  struct riscv_ovl_functions *functions;
+  struct riscv_ovl_functions *tail;
+};
+
 /* Linked list of overlay group ids.  */
 
-struct riscv_ovl_group_ids {
+struct riscv_ovl_group_ids
+{
   bfd_vma id;
   struct riscv_ovl_group_ids *next;
 };
@@ -325,11 +351,12 @@ struct riscv_ovl_group_ids {
      entry->multigroup  = TRUE
 */
 
-struct riscv_ovl_grouping_hash_entry
+struct riscv_ovl_func_to_group_hash_entry
 {
   struct bfd_hash_entry root;
   /* List of groups to which the function belongs.  */
   struct riscv_ovl_group_ids *groups;
+  struct riscv_ovl_group_ids *tail;
   /* TRUE if function belongs to more than one group.  */
   bfd_boolean multigroup;
 };
@@ -338,50 +365,47 @@ struct riscv_ovl_grouping_hash_entry
 /*TODO If we don't wish to store any extra fields alongside table, we could use
        bfd_hash_table directly and remove this struct.  */
 
-struct riscv_ovl_grouping_hash_table
+struct riscv_ovl_func_to_group_hash_table
 {
   struct bfd_hash_table root;
 };
 
+/* Look up an entry in an overlay grouping to function hash table.  */
+
+#define riscv_ovl_group_to_func_hash_lookup(table, string, create, copy) \
+  ((struct riscv_ovl_group_to_func_hash_entry *)                         \
+   bfd_hash_lookup (table, (string), (create), (copy)))
+
+/* Traverse an overlay grouping to function hash table.  */
+
+#define riscv_ovl_group_to_func_hash_traverse(table, func, info)  \
+  (bfd_hash_traverse                                              \
+   (table,                                                        \
+    (bfd_boolean (*) (struct bfd_hash_entry *, void *)) (func),   \
+    (info)))
+
 /* Look up an entry in an overlay grouping hash table.  */
 
-#define riscv_ovl_grouping_hash_lookup(table, string, create, copy) \
-  ((struct riscv_ovl_grouping_hash_entry *) \
+#define riscv_ovl_func_to_group_hash_lookup(table, string, create, copy) \
+  ((struct riscv_ovl_func_to_group_hash_entry *)                         \
    bfd_hash_lookup (&(table)->root, (string), (create), (copy)))
 
 /* Traverse an overlay group hash table.  */
 
-#define riscv_ovl_grouping_hash_traverse(table, func, info)     \
-  (bfd_hash_traverse                                            \
-   (&(table)->root,                                             \
-    (bfd_boolean (*) (struct bfd_hash_entry *, void *)) (func), \
+#define riscv_ovl_func_to_group_hash_traverse(table, func, info)  \
+  (bfd_hash_traverse                                              \
+   (&(table)->root,                                               \
+    (bfd_boolean (*) (struct bfd_hash_entry *, void *)) (func),   \
     (info)))
-
-
-/* Add entry to overlay grouping hash table.  */
-
-static bfd_boolean
-riscv_ovl_grouping_hash_insert (struct riscv_ovl_grouping_hash_table *table,
-				const char * func,
-				struct riscv_ovl_group_ids *groups,
-				bfd_boolean multigroup) {
-  struct riscv_ovl_grouping_hash_entry *entry;
-  entry = riscv_ovl_grouping_hash_lookup (table, func, TRUE, TRUE);
-  if (entry == NULL)
-    return FALSE;
-  entry->groups = groups;
-  entry->multigroup = multigroup;
-  return TRUE;
-}
 
 /* Create a new entry in an overlay grouping hash_table.  */
 static struct bfd_hash_entry *
-riscv_grouping_hash_newfunc (struct bfd_hash_entry *entry,
+riscv_ovl_func_to_group_hash_newfunc (struct bfd_hash_entry *entry,
 			     struct bfd_hash_table *table,
 			     const char *string)
 {
-  struct riscv_ovl_grouping_hash_entry *ret =
-    (struct riscv_ovl_grouping_hash_entry *) entry;
+  struct riscv_ovl_func_to_group_hash_entry *ret =
+    (struct riscv_ovl_func_to_group_hash_entry *) entry;
 
  /* Allocate the structure if it has not already been allocated by a
     derived class.  */
@@ -393,10 +417,46 @@ riscv_grouping_hash_newfunc (struct bfd_hash_entry *entry,
     }
 
  /* Call the allocation method of the base class.  */
-  ret = ((struct riscv_ovl_grouping_hash_entry *)
+  ret = ((struct riscv_ovl_func_to_group_hash_entry *)
          bfd_hash_newfunc ((struct bfd_hash_entry *) ret,
 				      table,
 				      string));
+
+  /* Initialize local fields.  */
+  ret->groups = NULL;
+  ret->tail = NULL;
+  ret->multigroup = FALSE;
+
+  return (struct bfd_hash_entry *) ret;
+}
+
+/* Create a new entry in an overlay grouping hash_table.  */
+static struct bfd_hash_entry *
+riscv_ovl_group_to_func_hash_newfunc (struct bfd_hash_entry *entry,
+				      struct bfd_hash_table *table,
+				      const char *string)
+{
+  struct riscv_ovl_group_to_func_hash_entry *ret =
+    (struct riscv_ovl_group_to_func_hash_entry *) entry;
+
+ /* Allocate the structure if it has not already been allocated by a
+    derived class.  */
+  if (ret == NULL)
+    {
+      ret = bfd_hash_allocate (table, sizeof (* ret));
+      if (ret == NULL)
+        return NULL;
+    }
+
+ /* Call the allocation method of the base class.  */
+  ret = ((struct riscv_ovl_group_to_func_hash_entry *)
+         bfd_hash_newfunc ((struct bfd_hash_entry *) ret,
+				      table,
+				      string));
+
+  /* Initialize local fields.  */
+  ret->functions = NULL;
+  ret->tail = NULL;
 
   return (struct bfd_hash_entry *) ret;
 }
@@ -404,20 +464,62 @@ riscv_grouping_hash_newfunc (struct bfd_hash_entry *entry,
 /* Create a new overlay grouping hash table.  */
 
 static bfd_boolean
-riscv_ovl_grouping_hash_table_init (struct riscv_ovl_grouping_hash_table *table)
+riscv_ovl_func_to_group_hash_table_init (
+    struct riscv_ovl_func_to_group_hash_table *table)
 {
   bfd_hash_table_init (&table->root,
-		       riscv_grouping_hash_newfunc,
-		       sizeof (struct riscv_ovl_grouping_hash_entry));
+		       riscv_ovl_func_to_group_hash_newfunc,
+		       sizeof (struct riscv_ovl_func_to_group_hash_entry));
+  return TRUE;
+}
+
+/* Create a new overlay grouping hash table.  */
+
+static bfd_boolean
+riscv_ovl_group_to_func_hash_table_init (struct bfd_hash_table *table)
+{
+  bfd_hash_table_init (table,
+		       riscv_ovl_group_to_func_hash_newfunc,
+		       sizeof (struct riscv_ovl_group_to_func_hash_entry));
   return TRUE;
 }
 
 /* Print an entry from an overlay grouping hash table.  */
 
 static bfd_boolean
-riscv_print_grouping_entry (struct riscv_ovl_grouping_hash_entry *entry,
-			    void *info ATTRIBUTE_UNUSED) {
-  fprintf (stderr, "%s:", entry->root.string);
+riscv_print_group_to_func_entry (
+    struct riscv_ovl_group_to_func_hash_entry *entry,
+    void *info ATTRIBUTE_UNUSED)
+{
+  fprintf (stderr, "Group %s:", entry->root.string);
+  struct riscv_ovl_functions *head = entry->functions;
+  while (head != NULL)
+    {
+      fprintf (stderr, " %s", head->name);
+      head = head->next;
+    }
+  fprintf(stderr, "\n");
+
+  return TRUE;
+}
+
+/* Print each entry in a group to function table.  */
+
+static void
+riscv_print_group_to_func_table (struct bfd_hash_table *table)
+{
+  riscv_ovl_group_to_func_hash_traverse (table, riscv_print_group_to_func_entry,
+				    NULL);
+}
+
+/* Print an entry from an overlay grouping hash table.  */
+
+static bfd_boolean
+riscv_print_func_to_group_entry (
+    struct riscv_ovl_func_to_group_hash_entry *entry,
+    void *info ATTRIBUTE_UNUSED)
+{
+  fprintf (stderr, "Function %s:", entry->root.string);
   struct riscv_ovl_group_ids *head = entry->groups;
   while (head != NULL)
     {
@@ -432,78 +534,120 @@ riscv_print_grouping_entry (struct riscv_ovl_grouping_hash_entry *entry,
 /* Print each entry in an overlay grouping hash table.  */
 
 static void
-riscv_print_grouping_hash_table (struct riscv_ovl_grouping_hash_table *table)
+riscv_print_func_to_group_table (
+    struct riscv_ovl_func_to_group_hash_table *table)
 {
-  riscv_ovl_grouping_hash_traverse (table, riscv_print_grouping_entry, NULL);
+  riscv_ovl_func_to_group_hash_traverse (table,
+					 riscv_print_func_to_group_entry,
+					 NULL);
 }
 
-/* Add a new entry to the end of a list of overlay group ids.  Returns a pointer
-   to the new tail node.  */
-
-static struct riscv_ovl_group_ids *
-riscv_ovl_group_add (struct riscv_ovl_group_ids *tail, bfd_vma id,
-		     struct riscv_ovl_grouping_hash_table *table)
+static bfd_boolean
+riscv_ovl_update_func_to_group (
+    struct riscv_ovl_func_to_group_hash_table *table,
+    const char *func, bfd_vma group)
 {
-  struct riscv_ovl_group_ids *this_entry;
-  /* Allocate space for this entry in the hash table's memory so it is freed
-     when the hash table is freed.  */
-  this_entry =  objalloc_alloc ((struct objalloc *) table->root.memory,
+  struct riscv_ovl_func_to_group_hash_entry *entry;
+  struct riscv_ovl_group_ids *this_node;
+
+  entry = riscv_ovl_func_to_group_hash_lookup (table, func, TRUE, TRUE);
+  if (entry == NULL)
+    return FALSE;
+
+  this_node =  objalloc_alloc ((struct objalloc *) table->root.memory,
 				sizeof (struct riscv_ovl_group_ids));
-  this_entry->id = id;
-  this_entry->next = NULL;
+  this_node->id = group;
+  this_node->next = NULL;
 
-  if (tail == NULL)
-    /* This is the only entry in the list.  */
-    return this_entry;
+  if (entry->groups == NULL)
+    entry->groups = this_node;
+  else
+    {
+      entry->tail->next = this_node;
+      entry->multigroup = TRUE;
+    }
+  entry->tail = this_node;
 
-  /* Add entry to the end of the list.  */
-  tail->next = this_entry;
+  return TRUE;
+}
 
-  return this_entry;
+static bfd_boolean
+riscv_ovl_update_group_to_func (struct bfd_hash_table *table,
+				const char *group, const char *func)
+{
+  struct riscv_ovl_group_to_func_hash_entry *entry;
+  struct riscv_ovl_functions *this_node;
+
+  entry = riscv_ovl_group_to_func_hash_lookup (table, group, TRUE, TRUE);
+  if (entry == NULL)
+    return FALSE;
+
+  this_node =  objalloc_alloc ((struct objalloc *) table->memory,
+				sizeof (struct riscv_ovl_functions));
+  this_node->name = objalloc_alloc ((struct objalloc *) table->memory,
+				    strlen(func) + 1);
+  strncpy(this_node->name, func, strlen(func));
+  this_node->next = NULL;
+
+  if (entry->functions == NULL)
+    entry->functions = this_node;
+  else
+    entry->tail->next = this_node;
+  entry->tail = this_node;
+
+  return TRUE;
 }
 
 /* Parse a line from the overlay grouping csv and insert into hash table.  */
 
 static bfd_boolean
-riscv_parse_grouping_line (char * line,
-			   struct riscv_ovl_grouping_hash_table *table)
+riscv_parse_grouping_line (
+    char * line,
+    struct riscv_ovl_func_to_group_hash_table *func_to_group,
+    struct bfd_hash_table *group_to_func)
 {
-  char *tok, *endptr, *func;
-  long int val;
-  struct riscv_ovl_group_ids *head = NULL;
-  struct riscv_ovl_group_ids *tail = NULL;
+  char *group_str, *endptr, *func;
+  bfd_vma group;
+  int group_cnt = 0;
 
   /* Parse function name.  */
   func = strtok (line, ",");
 
   /* Parse group ids.  */
-  while ((tok = strtok (NULL, ",")) != NULL)
+  while ((group_str = strtok (NULL, ",")) != NULL)
     {
-      val = strtol (tok, &endptr, 10);
+      group = strtol (group_str, &endptr, 10);
       if (*endptr != 0)
         {
 	  _bfd_error_handler (
-	       _("Invalid group id \"%s\" in overlay grouping file"), tok);
+	       _("Invalid group id \"%s\" in overlay grouping file"),
+		 group_str);
 	  bfd_set_error (bfd_error_bad_value);
 	  return FALSE;
         }
-      tail = riscv_ovl_group_add (tail, val, table);
-      /* Set head to the first entry of the list.  */
-      if (head == NULL)
-	head = tail;
+
+      if (!riscv_ovl_update_func_to_group (func_to_group, func, group))
+	{
+	  _bfd_error_handler (_("Failed to add %s to func_to_group"), func);
+	  bfd_set_error (bfd_error_bad_value);
+	  return FALSE;
+	}
+
+      if (!riscv_ovl_update_group_to_func (group_to_func, group_str, func))
+	{
+	  _bfd_error_handler (_("Failed to add %s to group_to_func"),
+			      group_str);
+	  bfd_set_error (bfd_error_bad_value);
+	  return FALSE;
+	}
+
+      group_cnt++;
     }
 
-  if (head == NULL)
+  if (group_cnt == 0)
     {
      _bfd_error_handler (_("No groups found for %s in overlay grouping file"),
 			 func);
-      bfd_set_error (bfd_error_bad_value);
-      return FALSE;
-    }
-
-  if (!riscv_ovl_grouping_hash_insert (table, func, head, head->next != NULL))
-    {
-     _bfd_error_handler (_("Failed to add entry to overlay grouping table"));
       bfd_set_error (bfd_error_bad_value);
       return FALSE;
     }
@@ -514,8 +658,10 @@ riscv_parse_grouping_line (char * line,
 /* Parse a csv containg grouping information for each function.  */
 
 static bfd_boolean
-riscv_parse_grouping_file (FILE * f,
-			   struct riscv_ovl_grouping_hash_table * table)
+riscv_parse_grouping_file (
+    FILE * f,
+    struct riscv_ovl_func_to_group_hash_table *func_to_group,
+    struct bfd_hash_table *group_to_func)
 {
   int c;
   int i = 0;
@@ -538,7 +684,9 @@ riscv_parse_grouping_file (FILE * f,
 	  if (i > 0)
 	    {
 	      line[i++] = '\0';
-	      if (!riscv_parse_grouping_line (line, table))
+	      if (!riscv_parse_grouping_line (line,
+					      func_to_group,
+					      group_to_func))
 	        {
 		  free(line);
 		  return FALSE;
@@ -561,7 +709,8 @@ riscv_parse_grouping_file (FILE * f,
 
 static bfd_boolean
 riscv_create_ovl_grouping_table (
-    struct riscv_ovl_grouping_hash_table *table)
+    struct riscv_ovl_func_to_group_hash_table *func_to_group,
+    struct bfd_hash_table *group_to_func)
 {
   bfd_boolean ret;
 
@@ -573,23 +722,33 @@ riscv_create_ovl_grouping_table (
       return FALSE;
     }
 
-  ret = riscv_ovl_grouping_hash_table_init (table);
+  ret = riscv_ovl_func_to_group_hash_table_init (func_to_group);
   if (!ret)
     {
-      _bfd_error_handler (_("Failed to initialize overlay grouping table"));
+      _bfd_error_handler (_("Failed to initialize func_to_group table"));
       bfd_set_error (bfd_error_bad_value);
       return FALSE;
     }
 
-  ret = riscv_parse_grouping_file (riscv_grouping_file,
-				   table);
+  ret = riscv_ovl_group_to_func_hash_table_init (group_to_func);
+  if (!ret)
+    {
+      _bfd_error_handler (_("Failed to initialize group_to_func table"));
+      bfd_set_error (bfd_error_bad_value);
+      bfd_hash_table_free (&(func_to_group)->root);
+      return FALSE;
+    }
+
+  ret = riscv_parse_grouping_file (riscv_grouping_file, func_to_group,
+				   group_to_func);
   if (!ret)
     {
       _bfd_error_handler (_("Failed to create overlay grouping table"));
       bfd_set_error (bfd_error_bad_value);
-      /* Unless riscv_ovl_grouping_hash_table is extended, there is nothing to
-         free there other than the underlying bfd_hash_table.  */
-      bfd_hash_table_free (&(table)->root);
+      /* Unless riscv_ovl_func_to_group_hash_table is extended, there is nothing
+	 to free there other than the underlying bfd_hash_table.  */
+      bfd_hash_table_free (&(func_to_group)->root);
+      bfd_hash_table_free (group_to_func);
       return FALSE;
     }
 
@@ -634,12 +793,16 @@ link_hash_newfunc (struct bfd_hash_entry *entry,
 
 static void
 riscv_test_ovl_grouping_table (void) {
-  struct riscv_ovl_grouping_hash_table table;
-  bfd_boolean success = riscv_create_ovl_grouping_table (&table);
+  struct riscv_ovl_func_to_group_hash_table func_to_group;
+  struct bfd_hash_table group_to_func;
+  bfd_boolean success = riscv_create_ovl_grouping_table (&func_to_group,
+							 &group_to_func);
   if (success)
     {
-      riscv_print_grouping_hash_table (&table);
-      bfd_hash_table_free (&table.root);
+      riscv_print_func_to_group_table (&func_to_group);
+      riscv_print_group_to_func_table (&group_to_func);
+      bfd_hash_table_free (&func_to_group.root);
+      bfd_hash_table_free (&group_to_func);
     }
 }
 

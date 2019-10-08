@@ -295,19 +295,17 @@ riscv_make_plt_entry (bfd *output_bfd, bfd_vma got, bfd_vma addr,
 
 /* Generate an overlay PLT entry.  */
 
-static bfd_vma ovloff (struct bfd_link_info *, bfd_vma);
-
 static bfd_boolean
-riscv_make_ovlplt_entry (struct bfd_link_info *info,
+riscv_make_ovlplt_entry (struct bfd_link_info *info ATTRIBUTE_UNUSED,
                          bfd_vma addr, uint32_t *entry)
 {
   /* lui   x30, %hi(.ovlplt entry)
      addi  x30, x30, %lo(.ovlplt entry)
      jalr  zero, x31, 0  */
   entry[0] = RISCV_UTYPE (LUI,  X_T5,
-                          RISCV_CONST_HIGH_PART(ovloff (info, addr)));
+                          RISCV_CONST_HIGH_PART(addr));
   entry[1] = RISCV_ITYPE (ADDI, X_T5, X_T5,
-                          RISCV_CONST_LOW_PART(ovloff (info, addr)));
+                          RISCV_CONST_LOW_PART(addr));
   entry[2] = RISCV_ITYPE (JALR, X_ZERO, X_T6, 0);
 
   return TRUE;
@@ -2334,31 +2332,20 @@ tpoff (struct bfd_link_info *info, bfd_vma address)
 /* Return the relocation value for the token in the overlay system.  */
 
 static bfd_vma
-ovloff (struct bfd_link_info *info, bfd_vma address)
+ovloff (struct bfd_link_info *info, struct elf_link_hash_entry *entry)
 {
-  asection *s, *all_overlay_fns_section;
-  for (s = info->output_bfd->sections; s != NULL; s = s->next)
-    {
-      if (strncmp (s->name, ".ovlallfns", 10) == 0)
-        break;
-    }
-  if (s == NULL)
-    {
-      (*_bfd_error_handler) (_("Missing .ovlallfns section"));
-      bfd_set_error (bfd_error_bad_value);
-      return 0;
-    }
-  all_overlay_fns_section = s;
+  struct riscv_elf_link_hash_table *htab;
+  htab = riscv_elf_hash_table (info);
 
-  /* Get the group for the symbol.  */
-  /* FIXME: Just hardcoded to 1 at the moment. Get from the .csv file.  */
-  /* FIXME: Check that the group ID will fit in the field.  */
-  bfd_vma group_id = 1;
+  /* Get the group(s) for the symbol.  */
+  struct riscv_ovl_func_to_group_hash_entry *func_groups =
+      riscv_ovl_func_to_group_hash_lookup(&htab->func_to_group,
+                                          entry->root.root.string, FALSE, FALSE);
+  BFD_ASSERT (func_groups != NULL);
+  BFD_ASSERT (func_groups->multigroup == FALSE);
 
-  /* The function offset is relative to the start of the group.  */
-  /* FIXME: Currently relative to the start of .text.ovlallfns.  */
-  /* FIXME: Check that the offset will fit in the field.  */
-  bfd_vma func_off = address - all_overlay_fns_section->vma;
+  bfd_vma group_id = func_groups->groups->id;
+  bfd_vma func_off = func_groups->groups->offset;
 
   /* +--------+------+----------+----------+---------+---------+
      |  31    |30-29 |   28-27  |   26-17  |   16-1  |    0    |
@@ -3272,14 +3259,16 @@ riscv_elf_relocate_section (bfd *output_bfd,
 	case R_RISCV_OVL_HI20:
 	case R_RISCV_OVL_LO12_I:
 	case R_RISCV_OVL32:
-	  relocation = ovloff (info, relocation);
+          /* FIXME: Ensure we only have a raw symbol values.  */
+	  relocation = ovloff (info, h);
 	  unresolved_reloc = FALSE;
 	  break;
 
 	case R_RISCV_OVLPLT_HI20:
 	case R_RISCV_OVLPLT_LO12_I:
 	case R_RISCV_OVLPLT32:
-	  relocation = ovloff (info, relocation);
+          /* FIXME: Ensure we only have a raw symbol values.  */
+	  relocation = ovloff (info, h);
 
 	  if (htab->sovlplt != NULL)
 	    {

@@ -105,49 +105,6 @@ struct _bfd_riscv_elf_obj_tdata
 #include "elf/common.h"
 #include "elf/internal.h"
 
-struct overlay_token_plt_index
-{
-  bfd_vma token;
-  unsigned id;
-};
-
-#if 0
-static int get_or_create_token_plt_index(bfd_vma token)
-{
-  unsigned idx;
-
-  /* Initialize the table of tokens.  */
-  static unsigned n_alloc_entries = 0;
-  static bfd_vma *tokens = NULL;
-  if (n_alloc_entries == 0)
-    {
-      n_alloc_entries = 32;
-      tokens = (bfd_vma *)bfd_malloc (n_alloc_entries * sizeof(*tokens));
-      tokens[0] = NULL;
-    }
-
-  /* Find the index for the token if it already exists.  */
-  for (idx = 0; idx < n_alloc_entries && tokens[idx]; idx++)
-    {
-      if (tokens[idx] == token)
-	return idx;
-    }
-  /* Token wasn't found, insert.  */
-  if (idx == n_alloc_entries || !tokens[idx])
-    {
-      if (idx == n_alloc_entries)
-	{
-	  n_alloc_entries = n_alloc_entries / 8 * 13;
-	  tokens = (bfd_vma *) bfd_realloc (tokens,
-					    n_alloc_entries * sizeof(*tokens));
-	}
-      tokens[idx] = token;
-      tokens[idx + 1] = NULL;
-    }
-  return idx;
-}
-#endif
-
 struct riscv_elf_link_hash_table
 {
   struct elf_link_hash_table elf;
@@ -155,19 +112,18 @@ struct riscv_elf_link_hash_table
   /* Short-cuts to get to dynamic linker sections.  */
   asection *sdyntdata;
 
-  /* Short-cuts to overlay sections.  */
-  asection *sovlplt;
-  asection **sovlgrp;
-  /* Offset to the next free overlay plt entry.  */
-  bfd_vma next_ovlplt_offset;
-
   /* Small local sym to section mapping cache.  */
   struct sym_cache sym_cache;
 
   /* The max alignment of output sections.  */
   bfd_vma max_alignment;
 
-  /* Mappings from groups to functions and vica-versa.  */
+  /* Short cut to overlay plt section.  */
+  asection *sovlplt;
+  /* Offset to the next free overlay plt entry.  */
+  bfd_vma next_ovlplt_offset;
+
+  /* Mappings from groups to functions and vice-versa.  */
   bfd_boolean overlay_group_sections_created;
   struct bfd_hash_table func_to_group;
   struct bfd_hash_table group_to_func;
@@ -296,16 +252,15 @@ riscv_make_plt_entry (bfd *output_bfd, bfd_vma got, bfd_vma addr,
 /* Generate an overlay PLT entry.  */
 
 static bfd_boolean
-riscv_make_ovlplt_entry (struct bfd_link_info *info ATTRIBUTE_UNUSED,
-                         bfd_vma addr, uint32_t *entry)
+riscv_make_ovlplt_entry (bfd_vma addr, uint32_t *entry)
 {
   /* lui   x30, %hi(.ovlplt entry)
      addi  x30, x30, %lo(.ovlplt entry)
      jalr  zero, x31, 0  */
   entry[0] = RISCV_UTYPE (LUI,  X_T5,
-                          RISCV_CONST_HIGH_PART(addr));
+			  RISCV_CONST_HIGH_PART(addr));
   entry[1] = RISCV_ITYPE (ADDI, X_T5, X_T5,
-                          RISCV_CONST_LOW_PART(addr));
+			  RISCV_CONST_LOW_PART(addr));
   entry[2] = RISCV_ITYPE (JALR, X_ZERO, X_T6, 0);
 
   return TRUE;
@@ -411,14 +366,12 @@ riscv_ovl_func_to_group_hash_newfunc (struct bfd_hash_entry *entry,
     {
       ret = bfd_hash_allocate (table, sizeof (* ret));
       if (ret == NULL)
-        return NULL;
+	return NULL;
     }
 
  /* Call the allocation method of the base class.  */
   ret = ((struct riscv_ovl_func_to_group_hash_entry *)
-         bfd_hash_newfunc ((struct bfd_hash_entry *) ret,
-				      table,
-				      string));
+      bfd_hash_newfunc ((struct bfd_hash_entry *) ret, table, string));
 
   /* Initialize local fields.  */
   ret->groups = NULL;
@@ -443,12 +396,12 @@ riscv_ovl_group_to_func_hash_newfunc (struct bfd_hash_entry *entry,
     {
       ret = bfd_hash_allocate (table, sizeof (* ret));
       if (ret == NULL)
-        return NULL;
+	return NULL;
     }
 
  /* Call the allocation method of the base class.  */
   ret = ((struct riscv_ovl_group_to_func_hash_entry *)
-         bfd_hash_newfunc ((struct bfd_hash_entry *) ret,
+	 bfd_hash_newfunc ((struct bfd_hash_entry *) ret,
 				      table,
 				      string));
 
@@ -617,13 +570,13 @@ riscv_parse_grouping_line (char * line, struct bfd_hash_table *func_to_group,
     {
       group = strtol (group_str, &endptr, 10);
       if (*endptr != 0)
-        {
+	{
 	  _bfd_error_handler (
 	       _("Invalid group id \"%s\" in overlay grouping file"),
 		 group_str);
 	  bfd_set_error (bfd_error_bad_value);
 	  return FALSE;
-        }
+	}
 
       if (!riscv_ovl_update_func_to_group (func_to_group, func, group))
 	{
@@ -785,24 +738,6 @@ link_hash_newfunc (struct bfd_hash_entry *entry,
   return entry;
 }
 
-/*FIXME temporary function for testing.  */
-
-#if 0
-static void
-riscv_test_ovl_grouping_table (void) {struct bfd_hash_table func_to_group;
-				      struct bfd_hash_table group_to_func;
-  bfd_boolean success = riscv_create_ovl_grouping_table (&func_to_group,
-							 &group_to_func);
-  if (success)
-    {
-      riscv_print_func_to_group_table (&func_to_group);
-      riscv_print_group_to_func_table (&group_to_func);
-      bfd_hash_table_free (&func_to_group);
-      bfd_hash_table_free (&group_to_func);
-    }
-}
-#endif
-
 /* Create a RISC-V ELF linker hash table.  */
 
 static struct bfd_link_hash_table *
@@ -823,14 +758,10 @@ riscv_elf_link_hash_table_create (bfd *abfd)
       return NULL;
     }
 
-  ret->sovlplt = NULL;
-  ret->sovlgrp = NULL;
-  ret->next_ovlplt_offset = 0;
-
   ret->max_alignment = (bfd_vma) -1;
 
-  //FIXME temporary call for testing
-  //riscv_test_ovl_grouping_table ();
+  ret->sovlplt = NULL;
+  ret->next_ovlplt_offset = 0;
 
   ret->overlay_group_sections_created = FALSE;
   bfd_boolean success = riscv_create_ovl_grouping_table (&ret->func_to_group,
@@ -843,50 +774,6 @@ riscv_elf_link_hash_table_create (bfd *abfd)
 
   return &ret->elf.root;
 }
-
-/* Create the .ovlgrp.* sections.
-
-   These sections are empty until after all the relocations have been
-   resolved, at which point these sections will be populated from the
-   contents of the .ovlallfns section.  */
-
-#if 0
-static bfd_boolean
-riscv_elf_create_overlay_group_sections (bfd *abfd, struct bfd_link_info *info)
-{
-  flagword flags;
-  asection *s;
-  const struct elf_backend_data *bed = get_elf_backend_data (abfd);
-  struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
-
-  /* This function may be called more than once.  */
-  if (htab->sovlgrp != NULL)
-    return TRUE;
-
-  flags = bed->dynamic_sec_flags;
-
-  /* Allocate a list to hold sections for each group.  */
-  /* FIXME: Hardcoded to one section for now.  */
-  asection **group_sections;
-  group_sections
-    = bfd_malloc (1 * sizeof (*group_sections));
-  if (group_sections == NULL)
-    return FALSE;
-
-  /* Generate section for each group.  */
-  s = bfd_make_section_anyway_with_flags (abfd, ".ovlgrp.1", flags);
-  if (s == NULL
-      || !bfd_set_section_alignment (abfd, s, bed->s->log_file_align))
-    return FALSE;
-  /* FIXME: Figure out the correct size.  */
-  s->size = 0;
-  group_sections[0] = s;
-
-  htab->sovlgrp = group_sections;
-
-  return TRUE;
-}
-#endif
 
 /* Create the .ovlplt section, and .rela.ovlplt.  */
 
@@ -908,7 +795,7 @@ riscv_elf_create_overlay_plt_section (bfd *abfd, struct bfd_link_info *info)
   if (s == NULL
       || !bfd_set_section_alignment (abfd, s, bed->s->log_file_align))
     return FALSE;
-  /* FIXME: Figure out the correct size.  */
+  /* The size of the overlay plt section is calculated later.  */
   s->size = 0;
   htab->sovlplt = s;
 
@@ -1037,7 +924,6 @@ riscv_elf_create_got_section (bfd *abfd, struct bfd_link_info *info)
   return TRUE;
 }
 
-
 /* Create .plt, .rela.plt, .got, .got.plt, .rela.got, .dynbss, and
    .rela.bss sections in DYNOBJ, and set up shortcuts to them in our
    hash table.  */
@@ -1050,8 +936,6 @@ riscv_elf_create_dynamic_sections (bfd *dynobj,
 
   htab = riscv_elf_hash_table (info);
   BFD_ASSERT (htab != NULL);
-
-  printf ("BANANA\n");
 
   if (!riscv_elf_create_overlay_group_sections (dynobj, info))
     return FALSE;
@@ -1206,7 +1090,6 @@ bad_static_reloc (bfd *abfd, unsigned r_type, struct elf_link_hash_entry *h)
   bfd_set_error (bfd_error_bad_value);
   return FALSE;
 }
-
 /* Look through the relocs for a section during the first phase, and
    allocate space in the global offset table or procedure linkage
    table.  */
@@ -1259,20 +1142,19 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 
       switch (r_type)
 	{
-        case R_RISCV_OVLPLT_LO12_I:
-        case R_RISCV_OVLPLT_HI20:
-        case R_RISCV_OVLPLT32:
-	  printf ("APPLE\n");
-          /* Create the overlay PLT section if it doesn't already exist.  */
-          if (!htab->sovlplt)
-            {
-              if (!riscv_elf_create_overlay_plt_section (abfd, info))
-                return FALSE;
+	case R_RISCV_OVLPLT_LO12_I:
+	case R_RISCV_OVLPLT_HI20:
+	case R_RISCV_OVLPLT32:
+	  /* Create the overlay PLT section if it doesn't already exist.  */
+	  if (!htab->sovlplt)
+	    {
+	      if (!riscv_elf_create_overlay_plt_section (abfd, info))
+		return FALSE;
 	      /* Enables analysis of dynamic sections. This is needed so
 	         that we can resize the overlay PLT section after we
-		 know how many entries will be needed.  */
+	         know how many entries will be needed.  */
 	      info->dynamic = 1;
-            }
+	    }
 
 	  {
 	    struct riscv_elf_link_hash_entry *eh =
@@ -1283,13 +1165,11 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 		htab->sovlplt->size += OVLPLT_ENTRY_SIZE;
 	      }
 	  }
-          /* fallthrough */
+	  /* fallthrough */
 
-        case R_RISCV_OVL_LO12_I:
-        case R_RISCV_OVL_HI20:
-        case R_RISCV_OVL32:
-	  printf ("CABBAGE\n");
-
+	case R_RISCV_OVL_LO12_I:
+	case R_RISCV_OVL_HI20:
+	case R_RISCV_OVL32:
 	  /* If not already created, this will create all of the sections
 	     to hold the contents of the overlay groups.  */
 	  riscv_elf_create_overlay_group_sections (abfd, info);
@@ -1297,30 +1177,7 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	  /* Enable analysis of dynamic sections since the size of the
 	     created overlay sections needs to be calculated later.  */
 	  info->dynamic = 1;
-
-          /* Find the group referenced by the symbol, and create that
-             group if it doesn't already exist.  */
-          /* FIXME: For now this just creates all of the groups.  */
-#if 0
-	  {
-	    struct riscv_elf_link_hash_entry *eh =
-		(struct riscv_elf_link_hash_entry *) h;
-	    if (eh && eh->ovlgrp != -1)
-	      {
-		/* Lookup the group number for this symbol, create it if
-		   it doesn't already exist.  */
-		eh->ovlgrp = 1;
-		if (riscv_elf_create_overlay_group_section (abfd, info,
-							    eh->ovlgrp))
-		  return FALSE;
-	      }
-	  }
-#endif
-          break;
-
-        /* FIXME: Create multigroups at the appropriate time.  */
-        /*if (!riscv_elf_create_overlay_multigroup_table_section (abfd, info))
-            return FALSE; */
+	  break;
 
 	case R_RISCV_TLS_GD_HI20:
 	  if (!riscv_elf_record_got_reference (abfd, info, h, r_symndx)
@@ -2011,7 +1868,7 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 
 	  /* Allocate the symbol's offset into the output section for the
 	     group. This corresponds to the current size of the output
-             section.  */
+	     section.  */
 	  sym_groups->groups->offset = group_entry->output_section->size;
 	  /* Allocate space in the output section for the contents of the
 	     input section corresponding to the symbol.  */
@@ -2027,88 +1884,6 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 
   riscv_print_group_to_func_table (&htab->group_to_func);
   riscv_print_func_to_group_table (&htab->func_to_group);
-
-#if 0
-  /* Allocate each symbol in .ovlallfns to an offset into its respective
-     group. This offset will be used when a token is materialized to refer
-     to the symbol in the overlay system.  */
-  s = bfd_get_section_by_name (output_bfd, ".ovlallfns");
-  if (!s)
-    return FALSE;
-
-  struct section_offset {
-    asection *section;
-    bfd_vma   offset;
-  };
-  struct symbol_offset {
-    const char *symbol_name;
-    bfd_vma     offset;
-  };
-
-  section_offset **per_group_section_offsets[1];
-  symbol_offset  **per_group_symbol_offsets[1];
-
-  /* Get the symbols from each input section which hav .ovlallfns as
-     their output section.  */
-  /* FIXME: Alignment? */
-  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
-    {
-      if (! is_riscv_elf (ibfd))
-	continue;
-
-      /* Adjust all the global symbols defined in this input bfd.  */
-      symtab_hdr = &elf_symtab_hdr (ibfd);
-      symcount = ((symtab_hdr->sh_size / sizeof (ElfNN_External_Sym))
-	          - symtab_hdr->sh_info);
-      
-      for (i = 0; i < symcount; i++)
-	{
-	  struct elf_link_hash_entry *h = sym_hashes[i];
-	  asection *sec = h->root.u.def.section;
-	  
-	  if (sec->output_section != ".ovlallfns")
-	    continue;
-
-	  sym_name = (char *) h->root.root.string;
-
-	  /* Find the group for this symbol.  */
-	  /* FIXME: Use the symbol name.  */
-	  int group = 1;
-
-	  /* Search to see whether this section has already been allocated in this
-	     group.  */
-	  bfd_vma section_offset_in_group = 0;
-	  for (section_offset **sec_off = per_group_section_offsets[group]; 
-	       *sec_off != NULL; sec_off++)
-	    {
-	      if ((*sec_off)->section == sec)
-		break;
-	      section_offset_in_group = (*sec_off)->offset
-	                                + (*sec_off)->section->size;
-	    }
-	  if (*sec_off == NULL)
-	    {
-	      *sec_off = malloc();
-	      (*sec_off)->section = sec;
-	      (*sec_off)->offset = section_offset_in_group;
-	    }
-
-	  for (symbol_offset **sym_off = per_group_symbol_offsets[group];
-	       *sym_off != NULL; sym_off++)
-	    {
-	      if ((*sym_off)->symbol_name == sym_name)
-		break;
-	    }
-	  if (*sym_off == NULL)
-	    {
-	      *sym_off = malloc();
-	      (*sym_off)->symbol_name = sym_name;
-	      (*sym_off)->offset = section_offset_in_group
-	                           + (sym->vma - sec->vma);
-	    }
-	}
-    }
-#endif
 
   /* Set up .got offsets for local syms, and space for local dynamic
      relocs.  */
@@ -3259,7 +3034,7 @@ riscv_elf_relocate_section (bfd *output_bfd,
 	case R_RISCV_OVL_HI20:
 	case R_RISCV_OVL_LO12_I:
 	case R_RISCV_OVL32:
-          /* FIXME: Ensure we only have a raw symbol values.  */
+	  /* FIXME: Ensure we only have a raw symbol values.  */
 	  relocation = ovloff (info, h);
 	  unresolved_reloc = FALSE;
 	  break;
@@ -3267,53 +3042,47 @@ riscv_elf_relocate_section (bfd *output_bfd,
 	case R_RISCV_OVLPLT_HI20:
 	case R_RISCV_OVLPLT_LO12_I:
 	case R_RISCV_OVLPLT32:
-          /* FIXME: Ensure we only have a raw symbol values.  */
+	  /* FIXME: Ensure we only have a raw symbol values.  */
 	  relocation = ovloff (info, h);
 
-	  if (htab->sovlplt != NULL)
+	  BFD_ASSERT (htab->sovlplt != NULL);
+	  /* For now, each entry in the PLT is either empty, or the first
+	      32-bits contains a previously encountered token value. First
+	      try to find the index of an existing token in the PLT, if it
+	      can't be found, append the token in the next unallocated entry
+	      at the end.  */
+	  bfd_vma offset;
+	  bfd_vma next_ovlplt_offset = htab->next_ovlplt_offset;
+
+	  for (offset = 0; offset < next_ovlplt_offset;
+	       offset += OVLPLT_ENTRY_SIZE)
 	    {
-	      /* For now, each entry in the PLT is either empty, or the first
-	         32-bits contains a previously encountered token value. First
-		 try to find the index of an existing token in the PLT, if it
-		 can't be found, append the token in the next unallocated entry
-		 at the end.  */
-	      bfd_vma offset;
-	      bfd_vma next_ovlplt_offset = htab->next_ovlplt_offset;
-
-	      for (offset = 0; offset < next_ovlplt_offset;
-		   offset += OVLPLT_ENTRY_SIZE)
-		{
-		  bfd_vma entry = bfd_get_32 (output_bfd,
-					      htab->sovlplt->contents + offset);
-		  if (entry == relocation)
-		    break;
-		}
-
-	      if (offset >= next_ovlplt_offset)
-		{
-		  bfd_put_32 (output_bfd, relocation,
-			      htab->sovlplt->contents + offset);
-		  htab->next_ovlplt_offset += OVLPLT_ENTRY_SIZE;
-		}
-
-	      relocation = sec_addr (htab->sovlplt) + offset;
-
-	      if (!h->def_regular)
-		{
-		  /* Mark the symbol as undefined, rather than as defined in
-		     the .plt section.  Leave the value alone.  */
-		  sym->st_shndx = SHN_UNDEF;
-		  /* If the symbol is weak, we do need to clear the value.
-		     Otherwise, the PLT entry would provide a definition for
-		     the symbol even if the symbol wasn't defined anywhere,
-		     and so the symbol would never be NULL.  */
-		  if (!h->ref_regular_nonweak)
-		    sym->st_value = 0;
-		}
+		bfd_vma entry = bfd_get_32 (output_bfd,
+		                            htab->sovlplt->contents + offset);
+		if (entry == relocation)
+		  break;
 	    }
-	  else
+
+	  if (offset >= next_ovlplt_offset)
 	    {
-	      /* ERROR? */
+	      bfd_put_32 (output_bfd, relocation,
+	                  htab->sovlplt->contents + offset);
+	      htab->next_ovlplt_offset += OVLPLT_ENTRY_SIZE;
+	    }
+
+	  relocation = sec_addr (htab->sovlplt) + offset;
+
+	  if (!h->def_regular)
+	    {
+	      /* Mark the symbol as undefined, rather than as defined in
+		 the .plt section.  Leave the value alone.  */
+	      sym->st_shndx = SHN_UNDEF;
+	      /* If the symbol is weak, we do need to clear the value.
+		 Otherwise, the PLT entry would provide a definition for
+		 the symbol even if the symbol wasn't defined anywhere,
+		 and so the symbol would never be NULL.  */
+	      if (!h->ref_regular_nonweak)
+	        sym->st_value = 0;
 	    }
 	  unresolved_reloc = FALSE;
 	  break;
@@ -3667,12 +3436,12 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 	   off += OVLPLT_ENTRY_SIZE)
 	{
 	  token = bfd_get_32 (output_bfd, htab->sovlplt->contents + off);
-	  if (! riscv_make_ovlplt_entry (info, token, ovlplt_entry))
+	  if (! riscv_make_ovlplt_entry (token, ovlplt_entry))
 	    return FALSE;
 
 	  for (i = 0; i < OVLPLT_ENTRY_INSNS; i++)
 	    bfd_put_32 (output_bfd, ovlplt_entry[i],
-			htab->sovlplt->contents + off + 4*i);
+	                htab->sovlplt->contents + off + 4*i);
 	}
     }
 
@@ -3720,13 +3489,13 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 						   group_id, FALSE, FALSE);
 	  BFD_ASSERT (group_entry != NULL);
 
-          /* Copy the contents from the output section .ovlallfns, to the
-             appropriate overlay group section for this symbol.  */
-          bfd_get_section_contents (
-              output_bfd, sec->output_section,
-              group_entry->output_section->contents + sym_groups->groups->offset,
-              sec->output_offset, sec->size);
-        }
+	  /* Copy the contents from the output section .ovlallfns, to the
+	     appropriate overlay group section for this symbol.  */
+	  bfd_get_section_contents (
+	      output_bfd, sec->output_section,
+	      group_entry->output_section->contents + sym_groups->groups->offset,
+	      sec->output_offset, sec->size);
+	}
     }
 
   if (htab->elf.sgotplt)

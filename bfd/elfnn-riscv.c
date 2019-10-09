@@ -74,6 +74,9 @@ struct riscv_elf_link_hash_entry
 
   /* Track whether this symbol needs an overlay PLT entry.  */
   int needs_ovlplt_entry;
+
+  /* Track whether this symbol needs an overlay multigroup entry.  */
+  int needs_ovlmultigroup_entry;
 };
 
 #define riscv_elf_hash_entry(ent) \
@@ -123,6 +126,9 @@ struct riscv_elf_link_hash_table
   /* Offset to the next free overlay plt entry.  */
   bfd_vma next_ovlplt_offset;
 
+  /* Short cut to overlay multigroup table section.  */
+  asection *sovlmultigroup;
+
   /* Mappings from groups to functions and vice-versa.  */
   bfd_boolean ovl_group_sections_created;
   struct bfd_hash_table ovl_func_table;
@@ -164,6 +170,7 @@ riscv_elf_append_rela (bfd *abfd, asection *s, Elf_Internal_Rela *rel)
 
 #define OVLPLT_ENTRY_INSNS 3
 #define OVLPLT_ENTRY_SIZE (OVLPLT_ENTRY_INSNS * 4)
+#define OVLMULTIGROUP_ITEM_SIZE 4
 
 #define GOT_ENTRY_SIZE RISCV_ELF_WORD_BYTES
 
@@ -311,6 +318,7 @@ struct riscv_ovl_func_group_info
      entry->root.hash   = hash("FuncA")
      entry->groups      = [3] -> [6] -> [9] -> NULL
      entry->multigroup  = TRUE
+     entry->multigroup_offset = 0;
 */
 
 struct riscv_ovl_func_hash_entry
@@ -321,6 +329,7 @@ struct riscv_ovl_func_hash_entry
   struct riscv_ovl_func_group_info *tail;
   /* TRUE if function belongs to more than one group.  */
   bfd_boolean multigroup;
+  bfd_vma multigroup_offset;
 };
 
 /* Look up an entry in an overlay grouping to function hash table.  */
@@ -377,6 +386,7 @@ riscv_ovl_func_hash_newfunc (struct bfd_hash_entry *entry,
   ret->groups = NULL;
   ret->tail = NULL;
   ret->multigroup = FALSE;
+  ret->multigroup_offset = 0;
 
   return (struct bfd_hash_entry *) ret;
 }
@@ -513,6 +523,7 @@ riscv_ovl_update_func (struct bfd_hash_table *table,
     {
       entry->tail->next = this_node;
       entry->multigroup = TRUE;
+      entry->multigroup_offset = 0;
     }
   entry->tail = this_node;
 
@@ -725,6 +736,7 @@ link_hash_newfunc (struct bfd_hash_entry *entry,
       eh->dyn_relocs = NULL;
       eh->tls_type = GOT_UNKNOWN;
       eh->needs_ovlplt_entry = FALSE;
+      eh->needs_ovlmultigroup_entry = FALSE;
     }
 
   return entry;
@@ -754,6 +766,7 @@ riscv_elf_link_hash_table_create (bfd *abfd)
 
   ret->sovlplt = NULL;
   ret->next_ovlplt_offset = 0;
+  ret->sovlmultigroup = NULL;
 
   ret->ovl_group_sections_created = FALSE;
   bfd_boolean success = riscv_create_ovl_group_table (&ret->ovl_func_table,
@@ -828,10 +841,37 @@ riscv_create_ovl_group_section (
   return TRUE;
 }
 
+/* Create the .ovlmultigroup section.  */
+
+static bfd_boolean
+riscv_elf_create_ovl_multigroup_table (bfd *abfd, struct bfd_link_info *info)
+{
+  flagword flags;
+  asection *s;
+  const struct elf_backend_data *bed = get_elf_backend_data (abfd);
+  struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
+
+  /* This function may be called more than once.  */
+  if (htab->sovlmultigroup != NULL)
+    return TRUE;
+
+  flags = bed->dynamic_sec_flags;
+
+  s = bfd_make_section_anyway_with_flags (abfd, ".ovlmultigroup", flags);
+  if (s == NULL
+      || !bfd_set_section_alignment (abfd, s, bed->s->log_file_align))
+    return FALSE;
+  /* The size of the multigroup section is calculated later.  */
+  s->size = 0;
+  htab->sovlmultigroup = s;
+
+  return TRUE;
+}
+
 /* Create the various overlay group sections.  */
 
 static bfd_boolean
-riscv_elf_created_ovl_group_sections (bfd *abfd, struct bfd_link_info *info)
+riscv_elf_create_ovl_group_sections (bfd *abfd, struct bfd_link_info *info)
 {
   struct riscv_elf_link_hash_table *htab;
   htab = riscv_elf_hash_table (info);
@@ -930,7 +970,7 @@ riscv_elf_create_dynamic_sections (bfd *dynobj,
   htab = riscv_elf_hash_table (info);
   BFD_ASSERT (htab != NULL);
 
-  if (!riscv_elf_created_ovl_group_sections (dynobj, info))
+  if (!riscv_elf_create_ovl_group_sections (dynobj, info))
     return FALSE;
 
   if (!riscv_elf_create_got_section (dynobj, info))
@@ -1165,11 +1205,54 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	case R_RISCV_OVL32:
 	  /* If not already created, this will create all of the sections
 	     to hold the contents of the overlay groups.  */
-	  riscv_elf_created_ovl_group_sections (abfd, info);
-
+	  if (!riscv_elf_create_ovl_group_sections (abfd, info))
+	    return FALSE;
 	  /* Enable analysis of dynamic sections since the size of the
-	     created overlay sections needs to be calculated later.  */
+	     created sections needs to be calculated later.  */
 	  info->dynamic = 1;
+
+	  {
+	    struct riscv_elf_link_hash_entry *eh =
+		(struct riscv_elf_link_hash_entry *) h;
+	    if (eh && !eh->needs_ovlmultigroup_entry)
+	      {
+		/* See if the symbols exists in multiple groups.  */
+		struct riscv_ovl_func_hash_entry *func_entry =
+		    riscv_ovl_func_hash_lookup(&htab->ovl_func_table,
+		                               h->root.root.string, FALSE,
+		                               FALSE);
+		if (func_entry && func_entry->multigroup == TRUE)
+		  {
+		    /* If the symbol is in a multigroup, then we need to ensure
+		       that the multigroup table section has been created.  */
+		    if (!htab->sovlmultigroup)
+		      {
+			if (!riscv_elf_create_ovl_multigroup_table (abfd, info))
+			  return FALSE;
+			BFD_ASSERT (info->dynamic == 1);
+		      }
+
+		    /* Calculate the size of the entry in the multigroup
+		       table. A multigroup entry consists of a list of tokens
+		       (4-bytes each) followed by a 4-byte 0 terminator.  */
+		    int multigroup_entry_size;
+		    struct riscv_ovl_func_group_info *func_group_info;
+
+		    multigroup_entry_size = 0;
+		    for (func_group_info = func_entry->groups; 
+		         func_group_info != NULL;
+		         func_group_info = func_group_info->next)
+		      multigroup_entry_size += 4;
+		    /* NULL terminator.  */
+		    multigroup_entry_size += 4;
+
+		    eh->needs_ovlmultigroup_entry = TRUE;
+
+		    func_entry->multigroup_offset = htab->sovlmultigroup->size;
+		    htab->sovlmultigroup->size += multigroup_entry_size;
+		  }
+	      }
+	  }
 	  break;
 
 	case R_RISCV_TLS_GD_HI20:
@@ -1810,11 +1893,15 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 	}
     }
 
-  /* Allocate space for the overlay PLT based on its size (determined when
-     checking the relocs.  */
+  /* Allocate space for the overlay PLT and overlay multigroup table based on
+     their sizes (determined when checking the relocs).  */
   if (htab->sovlplt)
     htab->sovlplt->contents =
 	(unsigned char *)bfd_zalloc (output_bfd, htab->sovlplt->size);
+
+  if (htab->sovlmultigroup)
+    htab->sovlmultigroup->contents =
+	(unsigned char *)bfd_zalloc (output_bfd, htab->sovlmultigroup->size);
 
   /* Iterate through the input symbols and if they are allocated to an
      overlay group allocate them to the next offset in that group.  */
@@ -2100,6 +2187,30 @@ tpoff (struct bfd_link_info *info, bfd_vma address)
   return address - elf_hash_table (info)->tls_sec->vma - TP_OFFSET;
 }
 
+/* Build up a token for the overlay system.  */
+static bfd_vma
+ovltoken (bfd_vma multigroup, bfd_vma func_off, bfd_vma group_id)
+{
+  BFD_ASSERT (multigroup <= 1);
+  BFD_ASSERT (func_off   <= 1023);
+  BFD_ASSERT (group_id   <= 65535);
+
+  /* +--------+------+----------+----------+---------+---------+
+     |  31    |30-29 |   28-27  |   26-17  |   16-1  |    0    |
+     +--------+------+----------+----------+---------+---------+
+     | Multi- | Heap | Reserved | Function | Overlay | Overlay |
+     | group  |  ID  |          | Offset   |  Group  | Address |
+     | Token  |      |          |          |   ID    |  Token  |
+     +--------+------+----------+----------+---------+---------+ */
+  bfd_vma token = 0;
+  token |= (multigroup & 0x1) << 31;  /* Multi-group token.  */
+  token |= (0 & 0x3) << 29;           /* Heap ID.  */
+  token |= (func_off & 0x3ff) << 17;  /* Function Offset.  */
+  token |= (group_id & 0xffff) << 1;  /* Overlay Group ID.  */
+  token |= (1 & 0x1) << 0;            /* Overlay Address Token.  */
+  return token;
+}
+
 /* Return the relocation value for the token in the overlay system.  */
 
 static bfd_vma
@@ -2113,31 +2224,39 @@ ovloff (struct bfd_link_info *info, struct elf_link_hash_entry *entry)
       riscv_ovl_func_hash_lookup(&htab->ovl_func_table,
                                  entry->root.root.string, FALSE, FALSE);
   BFD_ASSERT (func_groups != NULL);
+
   if (func_groups->multigroup == FALSE)
     {
-      bfd_vma group_id = func_groups->groups->id;
-      bfd_vma func_off = func_groups->groups->offset;
-
-      /* +--------+------+----------+----------+---------+---------+
-         |  31    |30-29 |   28-27  |   26-17  |   16-1  |    0    |
-         +--------+------+----------+----------+---------+---------+
-         | Multi- | Heap | Reserved | Function | Overlay | Overlay |
-         | group  |  ID  |          | Offset   |  Group  | Address |
-         | Token  |      |          |          |   ID    |  Token  |
-         +--------+------+----------+----------+---------+---------+ */
-
-      bfd_vma token = 0;
-      token |= (0 & 0x1) << 31;           /* Multi-group token.  */
-      token |= (0 & 0x3) << 29;           /* Heap ID.  */
-      token |= (func_off & 0x3ff) << 17;  /* Function Offset.  */
-      token |= (group_id & 0xffff) << 1;  /* Overlay Group ID.  */
-      token |= (1 & 0x1) << 0;            /* Overlay Address Token.  */
-      return token;
+      return ovltoken(0, func_groups->groups->offset / 4,
+                      func_groups->groups->id);
     }
   else
     {
-      /* Multigroup symbols are not handled yet.  */
-      return 0xcabba9e5;
+      /* Check if the entry in the multigroup table needs to be filled in.  */
+      bfd_byte *loc = htab->sovlmultigroup->contents
+                      + func_groups->multigroup_offset;
+      if (bfd_get_32 (info->output_bfd, loc) == 0)
+	{
+	  /* Create the multigroup table entry, filling it with tokens
+	     for the function in each of the groups it is contained within.  */
+	  struct riscv_ovl_func_group_info *func_group_info;
+	  for (func_group_info = func_groups->groups; func_group_info != NULL;
+	       func_group_info = func_group_info->next)
+	    {
+	      bfd_vma token;
+	      token = ovltoken(0, func_group_info->offset / 4,
+	                       func_group_info->id);
+	      bfd_put_32 (info->output_bfd, token, loc);
+	      loc += OVLMULTIGROUP_ITEM_SIZE;
+	    }
+	  /* The list of tokens is NULL terminated.  */
+	  bfd_put_32 (info->output_bfd, 0, loc);
+	}
+
+      /* Create the token referring to the multigroup.  */
+      bfd_vma multigroup_id;
+      multigroup_id = func_groups->multigroup_offset / OVLMULTIGROUP_ITEM_SIZE;
+      return ovltoken(1, 0, multigroup_id);
     }
 }
 

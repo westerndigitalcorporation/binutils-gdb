@@ -296,11 +296,11 @@ struct riscv_ovl_group_hash_entry
 
 /* Linked list of overlay group ids.  */
 
-struct riscv_ovl_group_ids
+struct riscv_ovl_func_group_info
 {
   bfd_vma id;
   bfd_vma offset;
-  struct riscv_ovl_group_ids *next;
+  struct riscv_ovl_func_group_info *next;
 };
 
 /* Hash entry storing the groups to which a function belongs.
@@ -317,8 +317,8 @@ struct riscv_ovl_func_hash_entry
 {
   struct bfd_hash_entry root;
   /* List of groups to which the function belongs.  */
-  struct riscv_ovl_group_ids *groups;
-  struct riscv_ovl_group_ids *tail;
+  struct riscv_ovl_func_group_info *groups;
+  struct riscv_ovl_func_group_info *tail;
   /* TRUE if function belongs to more than one group.  */
   bfd_boolean multigroup;
 };
@@ -471,7 +471,7 @@ riscv_print_func_entry (struct riscv_ovl_func_hash_entry *entry,
 			void *info ATTRIBUTE_UNUSED)
 {
   fprintf (stderr, "Function %s:", entry->root.string);
-  struct riscv_ovl_group_ids *head = entry->groups;
+  struct riscv_ovl_func_group_info *head = entry->groups;
   while (head != NULL)
     {
       fprintf (stderr, " %lu (@%lu)", head->id, head->offset);
@@ -495,14 +495,14 @@ riscv_ovl_update_func (struct bfd_hash_table *table,
 		       const char *func, bfd_vma group)
 {
   struct riscv_ovl_func_hash_entry *entry;
-  struct riscv_ovl_group_ids *this_node;
+  struct riscv_ovl_func_group_info *this_node;
 
   entry = riscv_ovl_func_hash_lookup (table, func, TRUE, TRUE);
   if (entry == NULL)
     return FALSE;
 
   this_node =  objalloc_alloc ((struct objalloc *) table->memory,
-				sizeof (struct riscv_ovl_group_ids));
+				sizeof (struct riscv_ovl_func_group_info));
   this_node->id = group;
   this_node->offset = 0;
   this_node->next = NULL;
@@ -1848,24 +1848,27 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 					  sym_name, FALSE, FALSE);
 	  if (sym_groups == NULL)
 	    continue;
-	  BFD_ASSERT (sym_groups->multigroup == FALSE); /* FIXME: multigroups */
 
-	  /* Get the output section that this symbol is allocated to.  */
-	  char group_id[24];
-	  sprintf (group_id, "%lu", sym_groups->groups->id);
+	  char group_id_str[24];
+	  struct riscv_ovl_func_group_info *func_group_info;
+	  for (func_group_info = sym_groups->groups; func_group_info != NULL;
+	       func_group_info = func_group_info->next)
+	    {
+	      /* Get the overlay group of the function that this belongs to.  */
+	      sprintf (group_id_str, "%lu", func_group_info->id);
+	      struct riscv_ovl_group_hash_entry *group_entry =
+		  riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
+					       group_id_str, FALSE, FALSE);
+	      BFD_ASSERT (group_entry != NULL);
 
-	  struct riscv_ovl_group_hash_entry *group_entry =
-	      riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
-					   group_id, FALSE, FALSE);
-	  BFD_ASSERT (group_entry != NULL);
-
-	  /* Allocate the symbol's offset into the output section for the
-	     group. This corresponds to the current size of the output
-	     section.  */
-	  sym_groups->groups->offset = group_entry->output_section->size;
-	  /* Allocate space in the output section for the contents of the
-	     input section corresponding to the symbol.  */
-	  group_entry->output_section->size += sec->size;
+	      /* Allocate the symbol's offset into the output section for the
+	         group. This corresponds to the current size of the output
+	         section.  */
+	      func_group_info->offset = group_entry->output_section->size;
+	      /* Allocate space in the output section for the contents of the
+	         input section corresponding to the symbol.  */
+	      group_entry->output_section->size += sec->size;
+	    }
 	}
     }
 
@@ -2110,26 +2113,32 @@ ovloff (struct bfd_link_info *info, struct elf_link_hash_entry *entry)
       riscv_ovl_func_hash_lookup(&htab->ovl_func_table,
                                  entry->root.root.string, FALSE, FALSE);
   BFD_ASSERT (func_groups != NULL);
-  BFD_ASSERT (func_groups->multigroup == FALSE);
+  if (func_groups->multigroup == FALSE)
+    {
+      bfd_vma group_id = func_groups->groups->id;
+      bfd_vma func_off = func_groups->groups->offset;
 
-  bfd_vma group_id = func_groups->groups->id;
-  bfd_vma func_off = func_groups->groups->offset;
+      /* +--------+------+----------+----------+---------+---------+
+         |  31    |30-29 |   28-27  |   26-17  |   16-1  |    0    |
+         +--------+------+----------+----------+---------+---------+
+         | Multi- | Heap | Reserved | Function | Overlay | Overlay |
+         | group  |  ID  |          | Offset   |  Group  | Address |
+         | Token  |      |          |          |   ID    |  Token  |
+         +--------+------+----------+----------+---------+---------+ */
 
-  /* +--------+------+----------+----------+---------+---------+
-     |  31    |30-29 |   28-27  |   26-17  |   16-1  |    0    |
-     +--------+------+----------+----------+---------+---------+
-     | Multi- | Heap | Reserved | Function | Overlay | Overlay |
-     | group  |  ID  |          | Offset   |  Group  | Address |
-     | Token  |      |          |          |   ID    |  Token  |
-     +--------+------+----------+----------+---------+---------+ */
-
-  bfd_vma token = 0;
-  token |= (0 & 0x1) << 31;           /* Multi-group token.  */
-  token |= (0 & 0x3) << 29;           /* Heap ID.  */
-  token |= (func_off & 0x3ff) << 17;  /* Function Offset.  */
-  token |= (group_id & 0xffff) << 1;  /* Overlay Group ID.  */
-  token |= (1 & 0x1) << 0;            /* Overlay Address Token.  */
-  return token;
+      bfd_vma token = 0;
+      token |= (0 & 0x1) << 31;           /* Multi-group token.  */
+      token |= (0 & 0x3) << 29;           /* Heap ID.  */
+      token |= (func_off & 0x3ff) << 17;  /* Function Offset.  */
+      token |= (group_id & 0xffff) << 1;  /* Overlay Group ID.  */
+      token |= (1 & 0x1) << 0;            /* Overlay Address Token.  */
+      return token;
+    }
+  else
+    {
+      /* Multigroup symbols are not handled yet.  */
+      return 0xcabba9e5;
+    }
 }
 
 /* Return the global pointer's value, or 0 if it is not in use.  */
@@ -3471,23 +3480,29 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 					  sym_name, FALSE, FALSE);
 	  if (sym_groups == NULL)
 	    continue;
-	  BFD_ASSERT (sym_groups->multigroup == FALSE); /* FIXME: multigroups */
 
-	  /* Get the output section and offset for this symbol.  */
-	  char group_id[24];
-	  sprintf (group_id, "%lu", sym_groups->groups->id);
+	  /* Get each output group section and corresponding offset for the
+	     symbol. Copy the contents for the symbol from .ovlallfns to
+	     each section at the appropriate offset.  */
+	  char group_id_str[24];
+	  struct riscv_ovl_func_group_info *func_group_info;
+	  for (func_group_info = sym_groups->groups; func_group_info != NULL;
+	       func_group_info = func_group_info->next)
+	    {
+	      sprintf (group_id_str, "%lu", func_group_info->id);
+	      struct riscv_ovl_group_hash_entry *group_entry =
+		  riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
+					       group_id_str, FALSE, FALSE);
+	      BFD_ASSERT (group_entry != NULL);
 
-	  struct riscv_ovl_group_hash_entry *group_entry =
-	      riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
-					   group_id, FALSE, FALSE);
-	  BFD_ASSERT (group_entry != NULL);
-
-	  /* Copy the contents from the output section .ovlallfns, to the
-	     appropriate overlay group section for this symbol.  */
-	  bfd_get_section_contents (
-	      output_bfd, sec->output_section,
-	      group_entry->output_section->contents + sym_groups->groups->offset,
-	      sec->output_offset, sec->size);
+	      /* Copy the contents from the output section .ovlallfns, to the
+	         appropriate overlay group section for this symbol.  */
+	      bfd_get_section_contents (
+		  output_bfd, sec->output_section,
+		  group_entry->output_section->contents
+		      + sym_groups->groups->offset,
+		  sec->output_offset, sec->size);
+	    }
 	}
     }
 

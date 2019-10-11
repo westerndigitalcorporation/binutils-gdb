@@ -1183,7 +1183,7 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	  /* Create the overlay PLT section if it doesn't already exist.  */
 	  if (!htab->sovlplt)
 	    {
-	      if (!riscv_elf_create_ovlplt_section (abfd, info))
+	      if (!riscv_elf_create_ovlplt_section (htab->elf.dynobj, info))
 		return FALSE;
 	      /* Enables analysis of dynamic sections. This is needed so
 	         that we can resize the overlay PLT section after we
@@ -1207,7 +1207,7 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	case R_RISCV_OVL32:
 	  /* If not already created, this will create all of the sections
 	     to hold the contents of the overlay groups.  */
-	  if (!riscv_elf_create_ovl_group_sections (abfd, info))
+	  if (!riscv_elf_create_ovl_group_sections (htab->elf.dynobj, info))
 	    return FALSE;
 	  /* Enable analysis of dynamic sections since the size of the
 	     created sections needs to be calculated later.  */
@@ -1229,7 +1229,7 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 		       that the multigroup table section has been created.  */
 		    if (!htab->sovlmultigroup)
 		      {
-			if (!riscv_elf_create_ovl_multigroup_table (abfd, info))
+			if (!riscv_elf_create_ovl_multigroup_table (htab->elf.dynobj, info))
 			  return FALSE;
 			BFD_ASSERT (info->dynamic == 1);
 		      }

@@ -839,7 +839,7 @@ riscv_elf_create_ovlplt_section (bfd *abfd, struct bfd_link_info *info)
   if (htab->sovlplt != NULL)
     return TRUE;
 
-  flags = bed->dynamic_sec_flags;
+  flags = bed->dynamic_sec_flags | SEC_READONLY | SEC_CODE;
 
   s = bfd_make_section_anyway_with_flags (abfd, ".ovlplt", flags);
   if (s == NULL
@@ -866,7 +866,7 @@ riscv_create_ovl_group_section (
   asection *s;
   const struct elf_backend_data *bed = get_elf_backend_data (abfd);
 
-  flags = bed->dynamic_sec_flags;
+  flags = bed->dynamic_sec_flags | SEC_READONLY;
 
   /* Materialize the output group name based on the group number.  */
   char *sname = (char *)bfd_malloc(strlen(".ovlgrp.")
@@ -900,7 +900,7 @@ riscv_elf_create_ovl_multigroup_table (bfd *abfd, struct bfd_link_info *info)
   if (htab->sovlmultigroup != NULL)
     return TRUE;
 
-  flags = bed->dynamic_sec_flags;
+  flags = bed->dynamic_sec_flags | SEC_READONLY;
 
   s = bfd_make_section_anyway_with_flags (abfd, ".ovlmultigroup", flags);
   if (s == NULL
@@ -928,7 +928,7 @@ riscv_elf_create_ovl_group_sections (bfd *abfd, struct bfd_link_info *info)
   flagword flags;
   asection *s;
   const struct elf_backend_data *bed = get_elf_backend_data (abfd);
-  flags = bed->dynamic_sec_flags;
+  flags = bed->dynamic_sec_flags | SEC_READONLY;
 
   /* Create output group sections based on the groups which exist in the
      grouping file. The locations of each function in the group section and

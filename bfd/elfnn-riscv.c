@@ -133,6 +133,9 @@ struct riscv_elf_link_hash_table
   /* Short cut to overlay multigroup table section.  */
   asection *sovlmultigroup;
 
+  /* Short cut to overlay group size table section.  */
+  asection *sovlgrouptable;
+
   /* Mappings from groups to functions and vice-versa.  */
   bfd_boolean ovl_group_sections_created;
   struct bfd_hash_table ovl_func_table;
@@ -922,6 +925,11 @@ riscv_elf_create_ovl_group_sections (bfd *abfd, struct bfd_link_info *info)
   if (htab->ovl_group_sections_created)
     return TRUE;
 
+  flagword flags;
+  asection *s;
+  const struct elf_backend_data *bed = get_elf_backend_data (abfd);
+  flags = bed->dynamic_sec_flags;
+
   /* Create output group sections based on the groups which exist in the
      grouping file. The locations of each function in the group section and
      the size of the group section will be calculated later.  */
@@ -930,6 +938,15 @@ riscv_elf_create_ovl_group_sections (bfd *abfd, struct bfd_link_info *info)
 				 abfd);
 
   riscv_print_group_table (&htab->ovl_group_table);
+
+  /* Create section for holding the section size table, this will be sized by
+     riscv_create_ovl_group_section.  */
+  s = bfd_make_section_anyway_with_flags (abfd, ".ovlgrptbl", flags);
+  if (s == NULL
+      || !bfd_set_section_alignment (abfd, s, bed->s->log_file_align))
+    return FALSE;
+  s->size = 0;
+  htab->sovlgrouptable = s;
 
   htab->ovl_group_sections_created = TRUE;
   return TRUE;
@@ -1923,6 +1940,7 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
   bfd *dynobj;
   asection *s;
   bfd *ibfd;
+  unsigned ovl_max_group = 0;
 
   htab = riscv_elf_hash_table (info);
   BFD_ASSERT (htab != NULL);
@@ -1989,6 +2007,8 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 	  for (func_group_info = sym_groups->groups; func_group_info != NULL;
 	       func_group_info = func_group_info->next)
 	    {
+	      ovl_max_group = func_group_info->id > ovl_max_group
+		? func_group_info->id : ovl_max_group;
 	      /* Get the overlay group of the function that this belongs to.  */
 	      sprintf (group_id_str, "%lu", func_group_info->id);
 	      struct riscv_ovl_group_hash_entry *group_entry =
@@ -2020,6 +2040,15 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
   fprintf(stderr, "Final Table\n===========\n");
   riscv_print_group_table (&htab->ovl_group_table);
   riscv_print_func_table (&htab->ovl_func_table);
+
+  /* Set the size of .ovlgrptbl section, adding a placeholder last entry.  */
+  if (htab->sovlgrouptable)
+    {
+      ovl_max_group = (ovl_max_group + 2) * 2;
+      htab->sovlgrouptable->size = ovl_max_group;
+      htab->sovlgrouptable->contents =
+        (bfd_byte *) bfd_zalloc (dynobj, ovl_max_group);
+    }
 
   /* Set up .got offsets for local syms, and space for local dynamic
      relocs.  */
@@ -3616,6 +3645,29 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 	  for (i = 0; i < OVLPLT_ENTRY_INSNS; i++)
 	    bfd_put_32 (output_bfd, ovlplt_entry[i],
 	                htab->sovlplt->contents + off + 4*i);
+	}
+    }
+
+  /* Fill in all the .ovlgrptbl table entries. */
+  if (htab->sovlgrouptable)
+    {
+      unsigned group = 0;
+      bfd_vma offset = 0;
+      char group_id_str[24];
+
+      for (group = 0; group < (htab->sovlgrouptable->size / 2); group++)
+	{
+	  /* Store current offset.  */
+	  uint16_t offset_stored = offset / 512;
+	  bfd_put_16 (output_bfd, offset_stored,
+		      htab->sovlgrouptable->contents + (group * 2));
+
+	  sprintf (group_id_str, "%u", group);
+	  struct riscv_ovl_group_hash_entry *group_entry =
+	    riscv_ovl_group_hash_lookup (&htab->ovl_group_table, group_id_str,
+					 FALSE, FALSE);
+	  if (group_entry)
+	    offset += group_entry->output_section->size;
 	}
     }
 

@@ -56,6 +56,10 @@
 #define ELF_MAXPAGESIZE			0x1000
 #define ELF_COMMONPAGESIZE		0x1000
 
+/* Constants for overlay system.  */
+#define OVL_CRC_SZ         4
+#define OVL_GROUPPAGESIZE  512
+
 /* RISC-V ELF linker hash entry.  */
 
 struct riscv_elf_link_hash_entry
@@ -452,7 +456,10 @@ riscv_print_group_entry (struct riscv_ovl_group_hash_entry *entry,
 {
   fprintf (stderr, "Group %s", entry->root.string);
   if (entry->output_section != NULL)
-    fprintf (stderr, " (Output Section: %s)", entry->output_section->name);
+    {
+      fprintf (stderr, " (Output Section: %s, size 0x%lx)",
+	       entry->output_section->name, entry->output_section->size);
+    }
   fputc (':', stderr);
 
   struct riscv_ovl_functions *head = entry->functions;
@@ -707,6 +714,39 @@ riscv_create_ovl_group_table (struct bfd_hash_table *ovl_func_table,
   fclose (riscv_grouping_file);
 
   return ret;
+}
+
+/* Calculate and insert one overlay group section CRC value.  */
+static bfd_boolean
+riscv_calculate_ovl_crc_entry (struct riscv_ovl_group_hash_entry *entry,
+			       bfd *output_bfd ATTRIBUTE_UNUSED) {
+  fprintf (stderr, "Group %s: ", entry->root.string);
+  if (entry->output_section != NULL)
+    {
+      if (entry->output_section->size == 0)
+	{
+	  fprintf(stderr, "(empty, skipping)\n");
+	  return TRUE;
+	}
+
+      /* TODO: [TC12], but use libiberty's xcrc32 as the default.  */
+      unsigned int crc = 0xffffffff;
+      crc = xcrc32(entry->output_section->contents,
+		   entry->output_section->size - OVL_CRC_SZ, crc);
+      fprintf(stderr, "%x", crc);
+      bfd_put_32 (output_bfd, crc, (entry->output_section->contents +
+				    entry->output_section->size - OVL_CRC_SZ));
+    }
+  fprintf(stderr, "\n");
+  return TRUE;
+}
+
+/* Calculate and insert all overlay group sections CRC values.  */
+static void
+riscv_calculate_ovl_crc (struct bfd_hash_table *table, bfd *output_bfd)
+{
+  fprintf(stderr, "Calculating CRCs\n================\n");
+  riscv_ovl_group_hash_traverse (table, riscv_calculate_ovl_crc_entry, output_bfd);
 }
 
 /* Create an entry in an RISC-V ELF linker hash table.  */
@@ -1865,6 +1905,12 @@ riscv_allocate_ovl_group_section_contents (
   if (entry->output_section->size == 0)
     return TRUE;
 
+  /* Add space for CRC then pad to valid overlay section size.  */
+  entry->output_section->size += OVL_CRC_SZ;
+  if (entry->output_section->size % OVL_GROUPPAGESIZE)
+    entry->output_section->size =
+      ((entry->output_section->size/OVL_GROUPPAGESIZE)+1)*OVL_GROUPPAGESIZE;
+
   entry->output_section->contents =
       (unsigned char *)bfd_zalloc (output_bfd, entry->output_section->size);
   return TRUE;
@@ -1961,12 +2007,17 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 	}
     }
 
+  fprintf(stderr, "Pre-size Table\n===========\n");
+  riscv_print_group_table (&htab->ovl_group_table);
+  riscv_print_func_table (&htab->ovl_func_table);
+
   /* For each output group section, allocate their space now that their
      size has been determined.  */
   riscv_ovl_group_hash_traverse (&htab->ovl_group_table,
 				 riscv_allocate_ovl_group_section_contents,
 				 output_bfd);
 
+  fprintf(stderr, "Final Table\n===========\n");
   riscv_print_group_table (&htab->ovl_group_table);
   riscv_print_func_table (&htab->ovl_func_table);
 
@@ -3621,11 +3672,15 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 	      bfd_get_section_contents (
 		  output_bfd, sec->output_section,
 		  group_entry->output_section->contents
-		      + sym_groups->groups->offset,
+		      + func_group_info->offset,
 		  sec->output_offset, sec->size);
 	    }
 	}
     }
+
+  /* Now all functions have been copied, calculate and insert the overlay
+     sections CRC.  */
+  riscv_calculate_ovl_crc (&htab->ovl_group_table, output_bfd);
 
   if (htab->elf.sgotplt)
     {

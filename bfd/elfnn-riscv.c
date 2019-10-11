@@ -776,6 +776,8 @@ riscv_elf_link_hash_table_create (bfd *abfd)
       riscv_print_func_table (&ret->ovl_func_table);
       riscv_print_group_table (&ret->ovl_group_table);
     }
+  else
+    return NULL;
 
   return &ret->elf.root;
 }

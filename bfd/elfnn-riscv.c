@@ -59,6 +59,7 @@
 /* Constants for overlay system.  */
 #define OVL_CRC_SZ         4
 #define OVL_GROUPPAGESIZE  512
+#define OVL_MAXGROUPSIZE   4096
 
 /* RISC-V ELF linker hash entry.  */
 
@@ -2043,6 +2044,16 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 	      /* Allocate space in the output section for the contents of the
 	         input section corresponding to the symbol.  */
 	      group_entry->output_section->size += sec->size;
+
+	      if (group_entry->output_section->size + OVL_CRC_SZ
+		  > OVL_MAXGROUPSIZE)
+		{
+		  _bfd_error_handler (_
+		    ("%pB: error: Overlay group %s exceeds maximum group size"),
+		     output_bfd, group_entry->root.string);
+		  bfd_set_error (bfd_error_bad_value);
+		  return FALSE;
+		}
 	    }
 	}
     }

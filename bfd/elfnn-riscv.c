@@ -2271,22 +2271,25 @@ tpoff (struct bfd_link_info *info, bfd_vma address)
 
 /* Build up a token for the overlay system.  */
 static bfd_vma
-ovltoken (bfd_vma multigroup, bfd_vma func_off, bfd_vma group_id)
+ovltoken (bfd_vma multigroup, bfd_vma from_plt, bfd_vma func_off,
+          bfd_vma group_id)
 {
   BFD_ASSERT (multigroup <= 1);
+  BFD_ASSERT (from_plt   <= 1);
   BFD_ASSERT (func_off   <= 1023);
   BFD_ASSERT (group_id   <= 65535);
 
-  /* +--------+------+----------+----------+---------+---------+
-     |  31    |30-29 |   28-27  |   26-17  |   16-1  |    0    |
-     +--------+------+----------+----------+---------+---------+
-     | Multi- | Heap | Reserved | Function | Overlay | Overlay |
-     | group  |  ID  |          | Offset   |  Group  | Address |
-     | Token  |      |          |          |   ID    |  Token  |
-     +--------+------+----------+----------+---------+---------+ */
+  /* +--------+------+----------+----------+---------+---------+---------+
+     |  31    |30-29 |   28     |    27    |  26-17  |   16-1  |    0    |
+     +--------+------+----------+----------+---------+---------+---------+
+     | Multi- | Heap | Reserved |   PLT    |Function | Overlay | Overlay |
+     | group  |  ID  |          |          |Offset   |  Group  | Address |
+     | Token  |      |          |          |         |   ID    |  Token  |
+     +--------+------+----------+----------+---------+---------+---------+ */
   bfd_vma token = 0;
   token |= (multigroup & 0x1) << 31;  /* Multi-group token.  */
   token |= (0 & 0x3) << 29;           /* Heap ID.  */
+  token |= (from_plt & 0x1) << 27;    /* From PLT.  */
   token |= (func_off & 0x3ff) << 17;  /* Function Offset.  */
   token |= (group_id & 0xffff) << 1;  /* Overlay Group ID.  */
   token |= (1 & 0x1) << 0;            /* Overlay Address Token.  */
@@ -2296,7 +2299,8 @@ ovltoken (bfd_vma multigroup, bfd_vma func_off, bfd_vma group_id)
 /* Return the relocation value for the token in the overlay system.  */
 
 static bfd_vma
-ovloff (struct bfd_link_info *info, struct elf_link_hash_entry *entry)
+ovloff (struct bfd_link_info *info, bfd_vma from_plt,
+        struct elf_link_hash_entry *entry)
 {
   struct riscv_elf_link_hash_table *htab;
   htab = riscv_elf_hash_table (info);
@@ -2309,7 +2313,7 @@ ovloff (struct bfd_link_info *info, struct elf_link_hash_entry *entry)
 
   if (func_groups->multigroup == FALSE)
     {
-      return ovltoken(0, func_groups->groups->offset / 4,
+      return ovltoken(0, from_plt, func_groups->groups->offset / 4,
                       func_groups->groups->id);
     }
   else
@@ -2326,7 +2330,7 @@ ovloff (struct bfd_link_info *info, struct elf_link_hash_entry *entry)
 	       func_group_info = func_group_info->next)
 	    {
 	      bfd_vma token;
-	      token = ovltoken(0, func_group_info->offset / 4,
+	      token = ovltoken(0, 0, func_group_info->offset / 4,
 	                       func_group_info->id);
 	      bfd_put_32 (info->output_bfd, token, loc);
 	      loc += OVLMULTIGROUP_ITEM_SIZE;
@@ -2338,7 +2342,7 @@ ovloff (struct bfd_link_info *info, struct elf_link_hash_entry *entry)
       /* Create the token referring to the multigroup.  */
       bfd_vma multigroup_id;
       multigroup_id = func_groups->multigroup_offset / OVLMULTIGROUP_ITEM_SIZE;
-      return ovltoken(1, 0, multigroup_id);
+      return ovltoken(1, from_plt, 0, multigroup_id);
     }
 }
 
@@ -3238,7 +3242,7 @@ riscv_elf_relocate_section (bfd *output_bfd,
 	case R_RISCV_OVL_LO12_I:
 	case R_RISCV_OVL32:
 	  /* FIXME: Ensure we only have a raw symbol values.  */
-	  relocation = ovloff (info, h);
+	  relocation = ovloff (info, /*from_plt*/0, h);
 	  unresolved_reloc = FALSE;
 	  break;
 
@@ -3246,7 +3250,7 @@ riscv_elf_relocate_section (bfd *output_bfd,
 	case R_RISCV_OVLPLT_LO12_I:
 	case R_RISCV_OVLPLT32:
 	  /* FIXME: Ensure we only have a raw symbol values.  */
-	  relocation = ovloff (info, h);
+	  relocation = ovloff (info, /*from_plt*/1, h);
 
 	  BFD_ASSERT (htab->sovlplt != NULL);
 	  /* For now, each entry in the PLT is either empty, or the first

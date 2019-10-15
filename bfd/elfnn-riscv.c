@@ -1947,6 +1947,14 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
   dynobj = htab->elf.dynobj;
   BFD_ASSERT (dynobj != NULL);
 
+  /* FIXME?: Marking the ovlallfns as NOLOAD results in a section with no
+     data for copying source functions out at the end of the link, strip the
+     alloc bit from this section manually here, so that the data still lives
+     in the final ELF file, and we can access it in FINISH_DYNAMIC_SECTIONS.  */
+  s = bfd_get_section_by_name(info->output_bfd, ".ovlallfns");
+  if (s != NULL)
+  s->flags &= ~SEC_ALLOC;
+
   if (elf_hash_table (info)->dynamic_sections_created)
     {
       /* Set the contents of the .interp section to the interpreter.  */

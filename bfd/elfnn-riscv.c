@@ -300,6 +300,9 @@ struct riscv_ovl_functions
 struct riscv_ovl_group_hash_entry
 {
   struct bfd_hash_entry root;
+  /* The group number */
+  unsigned group;
+
   /* List of functions that belong to this group.  */
   struct riscv_ovl_functions *functions;
   struct riscv_ovl_functions *tail;
@@ -423,6 +426,7 @@ riscv_ovl_group_hash_newfunc (struct bfd_hash_entry *entry,
 				      string));
 
   /* Initialize local fields.  */
+  ret->group = atoi(string);
   ret->functions = NULL;
   ret->tail = NULL;
   ret->output_section = NULL;
@@ -1916,6 +1920,8 @@ riscv_allocate_ovl_group_section_contents (
     struct riscv_ovl_group_hash_entry *entry, 
     bfd *output_bfd)
 {
+  bfd_vma offset;
+
   BFD_ASSERT (entry->output_section != NULL);
   BFD_ASSERT (entry->output_section->contents == NULL);
 
@@ -1929,7 +1935,13 @@ riscv_allocate_ovl_group_section_contents (
       ((entry->output_section->size/OVL_GROUPPAGESIZE)+1)*OVL_GROUPPAGESIZE;
 
   entry->output_section->contents =
-      (unsigned char *)bfd_zalloc (output_bfd, entry->output_section->size);
+      (unsigned char *)bfd_alloc (output_bfd, entry->output_section->size);
+
+  /* Groups must be passed with the group number.  */
+  for (offset = 0; offset < entry->output_section->size; offset += 2)
+    bfd_put_16 (output_bfd, entry->group,
+		entry->output_section->contents + offset);
+
   return TRUE;
 }
 

@@ -638,6 +638,8 @@ riscv_parse_grouping_file (FILE * f,
   int i = 0;
   int BUFSIZE = 1024;
   char *line = bfd_malloc (BUFSIZE);
+  bfd_boolean lines_parsed_p = FALSE;
+
   while (1)
     {
       c = fgetc (f);
@@ -661,6 +663,8 @@ riscv_parse_grouping_file (FILE * f,
 		  free(line);
 		  return FALSE;
 		}
+	      else
+		lines_parsed_p = TRUE;
 	      /* Line parsed, goto start of buffer.  */
 	      i=0;
 	    }
@@ -671,8 +675,14 @@ riscv_parse_grouping_file (FILE * f,
 	line[i++] = c;
     }
 
+  if (!lines_parsed_p)
+    {
+      _bfd_error_handler ("No lines found in grouping file");
+      bfd_set_error (bfd_error_bad_value);
+    }
+
   free (line);
-  return TRUE;
+  return lines_parsed_p;
 }
 
 /* Store grouping info in a hash table.  */

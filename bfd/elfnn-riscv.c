@@ -131,6 +131,9 @@ struct riscv_elf_link_hash_table
   /* Offset to the next free overlay plt entry.  */
   bfd_vma next_ovlplt_offset;
 
+  /* Short cut to output section containing the overlay group data.  */
+  asection *sovlgroupdata;
+
   /* Short cut to overlay multigroup table section.  */
   asection *sovlmultigroup;
 
@@ -289,13 +292,20 @@ struct riscv_ovl_functions
   struct riscv_ovl_functions *next;
 };
 
-/* Hash entry storing the functions that belong to a group.
+/* Hash entry storing information about an overlay group, including
+   a list of the function contained within it.
 
    e.g. If FuncA, FuncC and FuncD belong to group 3, this is stored as:
 
      entry->root.string = "3"
      entry->root.hash   = hash("3")
      entry->functions   = FuncA -> FuncC -> FuncD -> NULL
+
+   group_size and padded_group_size are the unpadded and padded group
+   sizes respectively, calculated in riscv_elf_size_dynamic_sections.
+   ovlgroupdata_offset is also calculcated in riscv_elf_size_dynamic_sections once
+   the size of all of the groups has been finalized and their layout in
+   .ovlgrpdata is known.
 */
 
 struct riscv_ovl_group_hash_entry
@@ -308,8 +318,11 @@ struct riscv_ovl_group_hash_entry
   struct riscv_ovl_functions *functions;
   struct riscv_ovl_functions *tail;
 
-  /* The output section created for this group.  */
-  asection *output_section;
+  /* Size of the groups contents, size of it when padded, and the offset
+     to the start of the group in the .ovlgrpdata output section.  */
+  bfd_vma group_size;
+  bfd_vma padded_group_size;
+  bfd_vma ovlgrpdata_offset;
 };
 
 /* Linked list of overlay group ids.  */
@@ -430,7 +443,9 @@ riscv_ovl_group_hash_newfunc (struct bfd_hash_entry *entry,
   ret->group = atoi(string);
   ret->functions = NULL;
   ret->tail = NULL;
-  ret->output_section = NULL;
+  ret->group_size = 0;
+  ret->padded_group_size = 0;
+  ret->ovlgrpdata_offset = 0;
 
   return (struct bfd_hash_entry *) ret;
 }
@@ -463,11 +478,9 @@ riscv_print_group_entry (struct riscv_ovl_group_hash_entry *entry,
 			 void *info ATTRIBUTE_UNUSED)
 {
   fprintf (stderr, "Group %s", entry->root.string);
-  if (entry->output_section != NULL)
-    {
-      fprintf (stderr, " (Output Section: %s, size 0x%lx)",
-	       entry->output_section->name, entry->output_section->size);
-    }
+  fprintf (stderr, " (output section offset: %lx, size 0x%lx, padded size 0x%lx)",
+           entry->ovlgrpdata_offset, entry->group_size,
+           entry->padded_group_size);
   fputc (':', stderr);
 
   struct riscv_ovl_functions *head = entry->functions;
@@ -734,26 +747,52 @@ riscv_create_ovl_group_table (struct bfd_hash_table *ovl_func_table,
   return ret;
 }
 
+struct bfd_and_link_info_pair {
+  bfd *bfd;
+  struct bfd_link_info *info;
+};
+
 /* Calculate and insert one overlay group section CRC value.  */
 static bfd_boolean
-riscv_calculate_ovl_crc_entry (struct riscv_ovl_group_hash_entry *entry,
-			       bfd *output_bfd ATTRIBUTE_UNUSED) {
+riscv_emit_ovl_padding_and_crc_entry (struct riscv_ovl_group_hash_entry *entry,
+				      struct bfd_and_link_info_pair *pair)
+{
+  bfd *output_bfd = pair->bfd;
+  struct bfd_link_info *info = pair->info;
+  struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
+
   fprintf (stderr, "Group %s: ", entry->root.string);
-  if (entry->output_section != NULL)
+  if (htab->sovlgroupdata != NULL)
     {
-      if (entry->output_section->size == 0)
+      if (entry->group_size == 0)
 	{
 	  fprintf(stderr, "(empty, skipping)\n");
 	  return TRUE;
 	}
 
+      /* Fill in the padding from group_size up to padded_group_size. Groups
+         are padded with the group number.  */
+      BFD_ASSERT (entry->group_size < entry->padded_group_size);
+
+      bfd_vma start_offset = entry->ovlgrpdata_offset + entry->group_size;
+      bfd_vma end_offset =
+	  entry->ovlgrpdata_offset + entry->padded_group_size - OVL_CRC_SZ;
+
+      bfd_vma offset;
+      for (offset = start_offset; offset < end_offset; offset += 2)
+	bfd_put_16 (output_bfd, entry->group,
+	            htab->sovlgroupdata->contents + offset);
+
+      /* Fill in the end of the group with the CRC of the contents.  */
       /* TODO: [TC12], but use libiberty's xcrc32 as the default.  */
       unsigned int crc = 0xffffffff;
-      crc = xcrc32(entry->output_section->contents,
-		   entry->output_section->size - OVL_CRC_SZ, crc);
+      crc = xcrc32(htab->sovlgroupdata->contents + start_offset,
+		   entry->padded_group_size - OVL_CRC_SZ, crc);
       fprintf(stderr, "%x", crc);
-      bfd_put_32 (output_bfd, crc, (entry->output_section->contents +
-				    entry->output_section->size - OVL_CRC_SZ));
+      bfd_put_32 (output_bfd, crc, (htab->sovlgroupdata->contents
+				    + entry->ovlgrpdata_offset
+				    + entry->padded_group_size
+				    - OVL_CRC_SZ));
     }
   fprintf(stderr, "\n");
   return TRUE;
@@ -761,10 +800,12 @@ riscv_calculate_ovl_crc_entry (struct riscv_ovl_group_hash_entry *entry,
 
 /* Calculate and insert all overlay group sections CRC values.  */
 static void
-riscv_calculate_ovl_crc (struct bfd_hash_table *table, bfd *output_bfd)
+riscv_emit_ovl_padding_and_crc (struct bfd_hash_table *table,
+                                struct bfd_and_link_info_pair *pair)
 {
   fprintf(stderr, "Calculating CRCs\n================\n");
-  riscv_ovl_group_hash_traverse (table, riscv_calculate_ovl_crc_entry, output_bfd);
+  riscv_ovl_group_hash_traverse (table, riscv_emit_ovl_padding_and_crc_entry,
+				 pair);
 }
 
 /* Create an entry in an RISC-V ELF linker hash table.  */
@@ -824,6 +865,8 @@ riscv_elf_link_hash_table_create (bfd *abfd)
 
   ret->sovlplt = NULL;
   ret->next_ovlplt_offset = 0;
+
+  ret->sovlgroupdata = NULL;
   ret->sovlmultigroup = NULL;
 
   ret->ovl_group_sections_created = FALSE;
@@ -867,40 +910,6 @@ riscv_elf_create_ovlplt_section (bfd *abfd, struct bfd_link_info *info)
   return TRUE;
 }
 
-/* Create an .ovlgrp.* section for an entry for a group in the parsed overlay
-   group-to-function map.  */
-
-static bfd_boolean
-riscv_create_ovl_group_section (
-    struct riscv_ovl_group_hash_entry *entry, 
-    bfd *abfd)
-{
-  BFD_ASSERT (entry->output_section == NULL);
-
-  flagword flags;
-  asection *s;
-  const struct elf_backend_data *bed = get_elf_backend_data (abfd);
-
-  flags = bed->dynamic_sec_flags | SEC_READONLY;
-
-  /* Materialize the output group name based on the group number.  */
-  char *sname = (char *)bfd_malloc(strlen(".ovlgrp.")
-                + strlen(entry->root.string) + 1);
-  sprintf (sname, ".ovlgrp.%s", entry->root.string);
-
-  /* Generate section for each group.  */
-  s = bfd_make_section_anyway_with_flags (abfd, sname, flags);
-  if (s == NULL
-      || !bfd_set_section_alignment (abfd, s, bed->s->log_file_align))
-    return FALSE;
-
-  /* The correct size will be determined later.  */
-  s->size = 0;
-  entry->output_section = s;
-
-  return TRUE;
-}
-
 /* Create the .ovlmultigroup section.  */
 
 static bfd_boolean
@@ -928,10 +937,10 @@ riscv_elf_create_ovl_multigroup_table (bfd *abfd, struct bfd_link_info *info)
   return TRUE;
 }
 
-/* Create the various overlay group sections.  */
+/* Create the output overlay group section.  */
 
 static bfd_boolean
-riscv_elf_create_ovl_group_sections (bfd *abfd, struct bfd_link_info *info)
+riscv_elf_create_ovl_group_section (bfd *abfd, struct bfd_link_info *info)
 {
   struct riscv_elf_link_hash_table *htab;
   htab = riscv_elf_hash_table (info);
@@ -945,12 +954,14 @@ riscv_elf_create_ovl_group_sections (bfd *abfd, struct bfd_link_info *info)
   const struct elf_backend_data *bed = get_elf_backend_data (abfd);
   flags = bed->dynamic_sec_flags | SEC_READONLY;
 
-  /* Create output group sections based on the groups which exist in the
-     grouping file. The locations of each function in the group section and
-     the size of the group section will be calculated later.  */
-  riscv_ovl_group_hash_traverse (&htab->ovl_group_table,
-				 riscv_create_ovl_group_section,
-				 abfd);
+  /* Create the output group section ".ovlgrpdata".  The locations of each
+     group and each function in this section will be calculated later.  */
+  s = bfd_make_section_anyway_with_flags (abfd, ".ovlgrpdata", flags);
+  if (s == NULL
+      || !bfd_set_section_alignment (abfd, s, bed->s->log_file_align))
+    return FALSE;
+  s->size = 0;
+  htab->sovlgroupdata = s;
 
   riscv_print_group_table (&htab->ovl_group_table);
 
@@ -1044,7 +1055,7 @@ riscv_elf_create_dynamic_sections (bfd *dynobj,
   htab = riscv_elf_hash_table (info);
   BFD_ASSERT (htab != NULL);
 
-  if (!riscv_elf_create_ovl_group_sections (dynobj, info))
+  if (!riscv_elf_create_ovl_group_section (dynobj, info))
     return FALSE;
 
   if (!riscv_elf_create_got_section (dynobj, info))
@@ -1279,7 +1290,7 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	case R_RISCV_OVL32:
 	  /* If not already created, this will create all of the sections
 	     to hold the contents of the overlay groups.  */
-	  if (!riscv_elf_create_ovl_group_sections (htab->elf.dynobj, info))
+	  if (!riscv_elf_create_ovl_group_section (htab->elf.dynobj, info))
 	    return FALSE;
 	  /* Enable analysis of dynamic sections since the size of the
 	     created sections needs to be calculated later.  */
@@ -1924,38 +1935,6 @@ maybe_set_textrel (struct elf_link_hash_entry *h, void *info_p)
   return TRUE;
 }
 
-/* Allocate space for each of the group sections.  */
-
-static bfd_boolean
-riscv_allocate_ovl_group_section_contents (
-    struct riscv_ovl_group_hash_entry *entry, 
-    bfd *output_bfd)
-{
-  bfd_vma offset;
-
-  BFD_ASSERT (entry->output_section != NULL);
-  BFD_ASSERT (entry->output_section->contents == NULL);
-
-  if (entry->output_section->size == 0)
-    return TRUE;
-
-  /* Add space for CRC then pad to valid overlay section size.  */
-  entry->output_section->size += OVL_CRC_SZ;
-  if (entry->output_section->size % OVL_GROUPPAGESIZE)
-    entry->output_section->size =
-      ((entry->output_section->size/OVL_GROUPPAGESIZE)+1)*OVL_GROUPPAGESIZE;
-
-  entry->output_section->contents =
-      (unsigned char *)bfd_alloc (output_bfd, entry->output_section->size);
-
-  /* Groups must be passed with the group number.  */
-  for (offset = 0; offset < entry->output_section->size; offset += 2)
-    bfd_put_16 (output_bfd, entry->group,
-		entry->output_section->contents + offset);
-
-  return TRUE;
-}
-
 static bfd_boolean
 riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 {
@@ -2050,12 +2029,12 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 	      /* Allocate the symbol's offset into the output section for the
 	         group. This corresponds to the current size of the output
 	         section.  */
-	      func_group_info->offset = group_entry->output_section->size;
+	      func_group_info->offset = group_entry->group_size;
 	      /* Allocate space in the output section for the contents of the
 	         input section corresponding to the symbol.  */
-	      group_entry->output_section->size += sec->size;
+	      group_entry->group_size += sec->size;
 
-	      if (group_entry->output_section->size + OVL_CRC_SZ
+	      if (group_entry->group_size + OVL_CRC_SZ
 		  > OVL_MAXGROUPSIZE)
 		{
 		  _bfd_error_handler (_
@@ -2072,11 +2051,43 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
   riscv_print_group_table (&htab->ovl_group_table);
   riscv_print_func_table (&htab->ovl_func_table);
 
-  /* For each output group section, allocate their space now that their
-     size has been determined.  */
-  riscv_ovl_group_hash_traverse (&htab->ovl_group_table,
-				 riscv_allocate_ovl_group_section_contents,
-				 output_bfd);
+  /* Now that the size of the groups is fixed calculated the padded size
+     of each group, finalize the offset of each group, and calculate the
+     total size needed in ".ovlgrpdata".  */
+  unsigned int i;
+  bfd_vma next_group_offset = 0;
+  for (i = 0; i <= ovl_max_group; i++)
+    {
+      char group_id_str[24];
+      sprintf (group_id_str, "%u", i);
+      struct riscv_ovl_group_hash_entry *group_entry =
+	  riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
+	                               group_id_str, FALSE, FALSE);
+      /* Ignore any gaps in the table.  */
+      if (group_entry == NULL)
+	continue;
+
+      /* Calculate the padded size of the group.  */
+      group_entry->padded_group_size = group_entry->group_size;
+      group_entry->padded_group_size += OVL_CRC_SZ;
+      if (group_entry->padded_group_size % OVL_GROUPPAGESIZE)
+	group_entry->padded_group_size =
+	  ((group_entry->padded_group_size/OVL_GROUPPAGESIZE)+1)*OVL_GROUPPAGESIZE;
+
+      /* Set the offset of the group to the next available offset.  */
+      group_entry->ovlgrpdata_offset = next_group_offset;
+
+      /* Add the padded group size to get the offet for the next group.
+         The padding will be filled in once contents for the output
+         section have been allocated.  */
+      next_group_offset += group_entry->padded_group_size;
+    }
+
+  /* The final size of the output section is now known, allocate the
+     contents.  */
+  htab->sovlgroupdata->size = next_group_offset;
+  htab->sovlgroupdata->contents =
+      (unsigned char *)bfd_alloc (output_bfd, htab->sovlgroupdata->size);
 
   fprintf(stderr, "Final Table\n===========\n");
   riscv_print_group_table (&htab->ovl_group_table);
@@ -3712,7 +3723,7 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 	    riscv_ovl_group_hash_lookup (&htab->ovl_group_table, group_id_str,
 					 FALSE, FALSE);
 	  if (group_entry)
-	    offset += group_entry->output_section->size;
+	    offset += group_entry->group_size;
 	}
     }
 
@@ -3768,7 +3779,8 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 	         appropriate overlay group section for this symbol.  */
 	      bfd_get_section_contents (
 		  output_bfd, sec->output_section,
-		  group_entry->output_section->contents
+		  htab->sovlgroupdata->contents
+		      + group_entry->ovlgrpdata_offset
 		      + func_group_info->offset,
 		  sec->output_offset, sec->size);
 	    }
@@ -3776,8 +3788,9 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
     }
 
   /* Now all functions have been copied, calculate and insert the overlay
-     sections CRC.  */
-  riscv_calculate_ovl_crc (&htab->ovl_group_table, output_bfd);
+     section padding and CRC.  */
+  struct bfd_and_link_info_pair pair = { output_bfd, info };
+  riscv_emit_ovl_padding_and_crc (&htab->ovl_group_table, &pair);
 
   if (htab->elf.sgotplt)
     {

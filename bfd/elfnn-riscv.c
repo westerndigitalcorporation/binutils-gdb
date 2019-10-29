@@ -82,6 +82,10 @@ struct riscv_elf_link_hash_entry
 
   /* Track whether this symbol needs an overlay multigroup entry.  */
   int needs_ovlmultigroup_entry;
+
+  /* Track whether this symbols is referred to my an overlay relocation,
+     and therefore needs to exist in at least one overlay group.  */
+  int needs_overlay_group;
 };
 
 #define riscv_elf_hash_entry(ent) \
@@ -141,9 +145,9 @@ struct riscv_elf_link_hash_table
   asection *sovlgrouptable;
 
   /* Mappings from groups to functions and vice-versa.  */
-  bfd_boolean ovl_group_sections_created;
   struct bfd_hash_table ovl_func_table;
   struct bfd_hash_table ovl_group_table;
+  bfd_boolean ovl_tables_populated;
 };
 
 
@@ -303,7 +307,7 @@ struct riscv_ovl_functions
 
    group_size and padded_group_size are the unpadded and padded group
    sizes respectively, calculated in riscv_elf_size_dynamic_sections.
-   ovlgroupdata_offset is also calculcated in riscv_elf_size_dynamic_sections once
+   ovlgrpdata_offset is also calculcated in riscv_elf_size_dynamic_sections once
    the size of all of the groups has been finalized and their layout in
    .ovlgrpdata is known.
 */
@@ -702,17 +706,11 @@ riscv_parse_grouping_file (FILE * f,
 
 static bfd_boolean
 riscv_create_ovl_group_table (struct bfd_hash_table *ovl_func_table,
-			      struct bfd_hash_table *ovl_group_table)
+			      struct bfd_hash_table *ovl_group_table,
+			      bfd_boolean *ovl_tables_populated)
 {
   bfd_boolean ret;
-
-  if (riscv_grouping_file == NULL)
-    {
-      _bfd_error_handler (_("Cannot create overlay grouping table without "
-	  "--grouping-file set"));
-      bfd_set_error (bfd_error_bad_value);
-      return FALSE;
-    }
+  *ovl_tables_populated = FALSE;
 
   ret = riscv_ovl_func_hash_table_init (ovl_func_table);
   if (!ret)
@@ -731,18 +729,21 @@ riscv_create_ovl_group_table (struct bfd_hash_table *ovl_func_table,
       return FALSE;
     }
 
-  ret = riscv_parse_grouping_file (riscv_grouping_file, ovl_func_table,
-				   ovl_group_table);
-  if (!ret)
+  if (riscv_grouping_file != NULL)
     {
-      _bfd_error_handler (_("Failed to create overlay grouping table"));
-      bfd_set_error (bfd_error_bad_value);
-      bfd_hash_table_free (ovl_func_table);
-      bfd_hash_table_free (ovl_group_table);
-      return FALSE;
+      ret = riscv_parse_grouping_file (riscv_grouping_file, ovl_func_table,
+                                       ovl_group_table);
+      if (!ret)
+	{
+	  _bfd_error_handler (_("Failed to create overlay grouping table"));
+	  bfd_set_error (bfd_error_bad_value);
+	  bfd_hash_table_free (ovl_func_table);
+	  bfd_hash_table_free (ovl_group_table);
+	  return FALSE;
+	}
+      *ovl_tables_populated = TRUE;
+      fclose (riscv_grouping_file);
     }
-
-  fclose (riscv_grouping_file);
 
   return ret;
 }
@@ -836,6 +837,7 @@ link_hash_newfunc (struct bfd_hash_entry *entry,
       eh->tls_type = GOT_UNKNOWN;
       eh->needs_ovlplt_entry = FALSE;
       eh->needs_ovlmultigroup_entry = FALSE;
+      eh->needs_overlay_group = FALSE;
     }
 
   return entry;
@@ -869,9 +871,10 @@ riscv_elf_link_hash_table_create (bfd *abfd)
   ret->sovlgroupdata = NULL;
   ret->sovlmultigroup = NULL;
 
-  ret->ovl_group_sections_created = FALSE;
-  bfd_boolean success = riscv_create_ovl_group_table (&ret->ovl_func_table,
-						      &ret->ovl_group_table);
+  bfd_boolean success;
+  success = riscv_create_ovl_group_table (&ret->ovl_func_table,
+                                          &ret->ovl_group_table,
+                                          &ret->ovl_tables_populated);
   if (success)
     {
       riscv_print_func_table (&ret->ovl_func_table);
@@ -946,8 +949,11 @@ riscv_elf_create_ovl_group_section (bfd *abfd, struct bfd_link_info *info)
   htab = riscv_elf_hash_table (info);
 
   /* This function may be called more than once.  */
-  if (htab->ovl_group_sections_created)
-    return TRUE;
+  if (htab->sovlgroupdata != NULL)
+    {
+      BFD_ASSERT (htab->sovlgrouptable != NULL);
+      return TRUE;
+    }
 
   flagword flags;
   asection *s;
@@ -974,7 +980,6 @@ riscv_elf_create_ovl_group_section (bfd *abfd, struct bfd_link_info *info)
   s->size = 0;
   htab->sovlgrouptable = s;
 
-  htab->ovl_group_sections_created = TRUE;
   return TRUE;
 }
 
@@ -1299,6 +1304,10 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	  {
 	    struct riscv_elf_link_hash_entry *eh =
 		(struct riscv_elf_link_hash_entry *) h;
+
+	    /* This symbol must exist in an overlay group.  */
+	    eh->needs_overlay_group = TRUE;
+
 	    if (eh && !eh->needs_ovlmultigroup_entry)
 	      {
 		/* See if the symbols exists in multiple groups.  */
@@ -1979,8 +1988,6 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
     htab->sovlmultigroup->contents =
 	(unsigned char *)bfd_zalloc (output_bfd, htab->sovlmultigroup->size);
 
-  /* Iterate through the input symbols and if they are allocated to an
-     overlay group allocate them to the next offset in that group.  */
   for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
     {
       unsigned int i, symcount;
@@ -1993,22 +2000,122 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
       symtab_hdr = &elf_symtab_hdr (ibfd);
       symcount = ((symtab_hdr->sh_size / sizeof (ElfNN_External_Sym))
 	          - symtab_hdr->sh_info);
+
+      /* If no overlay groups were provided, see if we should call out to
+         the grouping tool.  */
+      if (!htab->ovl_tables_populated)
+	{
+	  /* TODO: call out to grouping tool.  */
+	  /* htab->ovl_tables_populated = TRUE;  */
+	  /* ovl_max_group = ???; */
+	}
       
+      /* No grouping file was provided, and we weren't able to call out to
+         the grouping tool to do the grouping for us, so fallback to
+         putting each symbol into a group of its own.  */
+      if (!htab->ovl_tables_populated)
+	{
+	  unsigned next_group = 0;
+	  for (i = 0; i < symcount; i++)
+	    {
+	      struct riscv_elf_link_hash_entry *eh =
+	          (struct riscv_elf_link_hash_entry *)sym_hashes[i];
+	      asection *sec = eh->elf.root.u.def.section;
+
+	      if (!eh->needs_overlay_group)
+		continue;
+
+	      /* A symbol which needs an overlay group will be in a section with
+	         a name of the format .text.ovlfn.<symbol name>.  */
+	      if (strncmp (sec->name, ".text.ovlfn.",
+	                   strlen(".text.ovlfn.")) != 0)
+		continue;
+	      const char *sym_name = sec->name + strlen(".text.ovlfn.");
+
+	      /* Put the symbol in the next available group.  */
+	      char next_group_str[24];
+	      sprintf (next_group_str, "%u", next_group);
+
+	      if (!riscv_ovl_update_func (&htab->ovl_func_table, sym_name,
+	                                  next_group))
+		{
+		  _bfd_error_handler (_("Failed to add %s to ovl_func_table"),
+		                      sym_name);
+		  bfd_set_error (bfd_error_bad_value);
+		  return FALSE;
+		}
+
+	      if (!riscv_ovl_update_group (&htab->ovl_group_table,
+	                                   next_group_str, sym_name))
+		{
+		  _bfd_error_handler (_("Failed to add %s to ovl_group_table"),         
+		                      next_group_str);
+		  bfd_set_error (bfd_error_bad_value);
+		  return FALSE;
+		}
+
+	      /* Get the newly created group entry and update its size. The
+	         other fields (padded size and .ovlgrpdata offset) will be
+		 updated later.  */
+	      struct riscv_ovl_group_hash_entry *group_entry =
+		  riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
+					       next_group_str, FALSE, FALSE);
+	      BFD_ASSERT (group_entry != NULL);
+	      group_entry->group_size = sec->size;
+
+	      /* The next symbol will be placed in the next group.  */
+	      ovl_max_group = next_group;
+	      next_group += 1;
+	    }
+	  htab->ovl_tables_populated = TRUE;
+	}
+
+      /* Iterate through the input symbols and if they are allocated to an
+         overlay group allocate them to the next offset in that group.  */
+      BFD_ASSERT (htab->ovl_tables_populated == TRUE);
       for (i = 0; i < symcount; i++)
 	{
-	  struct elf_link_hash_entry *h = sym_hashes[i];
-	  asection *sec = h->root.u.def.section;
+	  struct riscv_elf_link_hash_entry *eh =
+	      (struct riscv_elf_link_hash_entry *)sym_hashes[i];
+	  asection *sec = eh->elf.root.u.def.section;
 
 	  /* A symbol in an overlay group will be in a section with a
 	     name of the format .text.ovlfn.<symbol name>.  */
 	  if (strncmp (sec->name, ".text.ovlfn.", strlen(".text.ovlfn.")) != 0)
+	    {
+	      if (eh->needs_overlay_group)
+		{
+		  _bfd_error_handler (_("A symbol in section '%s` is in an "
+		                        "overlay group, but the containing "
+		                        "section does not have a "
+		                        "'.text.ovlfn.` prefix."),
+		                      sec->name);
+		  bfd_set_error (bfd_error_bad_value);
+		  return FALSE;
+		}
+	    }
+	  else
 	    continue;
+
 	  const char *sym_name = sec->name + strlen(".text.ovlfn.");
 
 	  /* Lookup all of the groups that this symbol exists in.  */
 	  struct riscv_ovl_func_hash_entry *sym_groups =
 	      riscv_ovl_func_hash_lookup (&htab->ovl_func_table,
 					  sym_name, FALSE, FALSE);
+	  /* Every symbol that is referred to by an overlay relocation should
+	     have been allocated to a group by this point. The group should
+	     be provided by the grouping file, the grouping tool, or have been
+	     autoassigned.  */
+	  if (eh->needs_overlay_group && sym_groups == NULL)
+	    {
+	      _bfd_error_handler (_("Symbol '%s` is not assigned to an overlay "
+	                            "group, but has been referenced as an "
+	                            "overlay symbol through a relocation."),
+	                            sym_name);
+	      bfd_set_error (bfd_error_bad_value);
+	      return FALSE;
+	    }
 	  if (sym_groups == NULL)
 	    continue;
 

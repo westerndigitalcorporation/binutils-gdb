@@ -93,21 +93,34 @@ EOF
 #
 PARSE_AND_LIST_PROLOGUE='
 #define OPTION_GROUPING_FILE		301
+#define OPTION_GROUPING_TOOL_ARGS	302
 '
 
 PARSE_AND_LIST_LONGOPTS='
-  { "grouping-file", required_argument, NULL, OPTION_GROUPING_FILE },
+  { "grouping-file",      required_argument, NULL, OPTION_GROUPING_FILE },
+  { "grouping-tool-args", required_argument, NULL, OPTION_GROUPING_TOOL_ARGS },
 '
 
 PARSE_AND_LIST_OPTIONS='
   fprintf (file, _("--grouping-file             Grouping file name\n"));
+  fprintf (file, _("--grouping-tool-args        Arguments to the grouping tool\n"));
 '
 
 PARSE_AND_LIST_ARGS_CASES='
     case OPTION_GROUPING_FILE:
+      if (riscv_use_grouping_tool)
+	einfo (_("--grouping-file provided, but --grouping-tools-args already "
+	         "specified"), optarg);
       riscv_grouping_file = fopen (optarg, FOPEN_RT);
       if (riscv_grouping_file == NULL)
 	einfo (_("%F%P: cannot open grouping file %s\n"), optarg);
+      break;
+    case OPTION_GROUPING_TOOL_ARGS:
+      if (riscv_grouping_file != NULL)
+	einfo (_("--grouping-tool-args provided, but --grouping-file already "
+	         "specified"), optarg);
+      riscv_use_grouping_tool = TRUE;
+      strcpy(riscv_grouping_tool_args, optarg);
       break;
 '
 

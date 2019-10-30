@@ -33,6 +33,8 @@
 #include "opcode/riscv.h"
 #include "objalloc.h"
 
+#include <sys/wait.h>
+
 /* Internal relocations used exclusively by the relaxation pass.  */
 #define R_RISCV_DELETE (R_RISCV_max + 1)
 
@@ -787,7 +789,7 @@ riscv_emit_ovl_padding_and_crc_entry (struct riscv_ovl_group_hash_entry *entry,
       /* Fill in the end of the group with the CRC of the contents.  */
       /* TODO: [TC12], but use libiberty's xcrc32 as the default.  */
       unsigned int crc = 0xffffffff;
-      crc = xcrc32(htab->sovlgroupdata->contents + start_offset,
+      crc = xcrc32(htab->sovlgroupdata->contents + entry->ovlgrpdata_offset,
 		   entry->padded_group_size - OVL_CRC_SZ, crc);
       fprintf(stderr, "%x", crc);
       bfd_put_32 (output_bfd, crc, (htab->sovlgroupdata->contents
@@ -1063,6 +1065,9 @@ riscv_elf_create_dynamic_sections (bfd *dynobj,
   if (!riscv_elf_create_ovl_group_section (dynobj, info))
     return FALSE;
 
+  if (!riscv_elf_create_ovl_multigroup_table (dynobj, info))
+    return FALSE;
+
   if (!riscv_elf_create_got_section (dynobj, info))
     return FALSE;
 
@@ -1294,58 +1299,22 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	case R_RISCV_OVL_HI20:
 	case R_RISCV_OVL32:
 	  /* If not already created, this will create all of the sections
-	     to hold the contents of the overlay groups.  */
+	     to hold the contents of the overlay groups and the multigroup
+	     table.  */
 	  if (!riscv_elf_create_ovl_group_section (htab->elf.dynobj, info))
 	    return FALSE;
+	  if (!riscv_elf_create_ovl_multigroup_table (htab->elf.dynobj, info))
+	    return FALSE;
+
 	  /* Enable analysis of dynamic sections since the size of the
 	     created sections needs to be calculated later.  */
 	  info->dynamic = 1;
-
 	  {
 	    struct riscv_elf_link_hash_entry *eh =
 		(struct riscv_elf_link_hash_entry *) h;
 
 	    /* This symbol must exist in an overlay group.  */
 	    eh->needs_overlay_group = TRUE;
-
-	    if (eh && !eh->needs_ovlmultigroup_entry)
-	      {
-		/* See if the symbols exists in multiple groups.  */
-		struct riscv_ovl_func_hash_entry *func_entry =
-		    riscv_ovl_func_hash_lookup(&htab->ovl_func_table,
-		                               h->root.root.string, FALSE,
-		                               FALSE);
-		if (func_entry && func_entry->multigroup == TRUE)
-		  {
-		    /* If the symbol is in a multigroup, then we need to ensure
-		       that the multigroup table section has been created.  */
-		    if (!htab->sovlmultigroup)
-		      {
-			if (!riscv_elf_create_ovl_multigroup_table (htab->elf.dynobj, info))
-			  return FALSE;
-			BFD_ASSERT (info->dynamic == 1);
-		      }
-
-		    /* Calculate the size of the entry in the multigroup
-		       table. A multigroup entry consists of a list of tokens
-		       (4-bytes each) followed by a 4-byte 0 terminator.  */
-		    int multigroup_entry_size;
-		    struct riscv_ovl_func_group_info *func_group_info;
-
-		    multigroup_entry_size = 0;
-		    for (func_group_info = func_entry->groups; 
-		         func_group_info != NULL;
-		         func_group_info = func_group_info->next)
-		      multigroup_entry_size += 4;
-		    /* NULL terminator.  */
-		    multigroup_entry_size += 4;
-
-		    eh->needs_ovlmultigroup_entry = TRUE;
-
-		    func_entry->multigroup_offset = htab->sovlmultigroup->size;
-		    htab->sovlmultigroup->size += multigroup_entry_size;
-		  }
-	      }
 	  }
 	  break;
 
@@ -1984,37 +1953,127 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
     htab->sovlplt->contents =
 	(unsigned char *)bfd_zalloc (output_bfd, htab->sovlplt->size);
 
-  if (htab->sovlmultigroup)
-    htab->sovlmultigroup->contents =
-	(unsigned char *)bfd_zalloc (output_bfd, htab->sovlmultigroup->size);
-
-  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+  /* If a grouping has not yet been specified, then try calling the
+     grouping tool.  */
+  if (!htab->ovl_tables_populated && riscv_use_grouping_tool)
     {
-      unsigned int i, symcount;
-      Elf_Internal_Shdr *symtab_hdr;
-      struct elf_link_hash_entry **sym_hashes = elf_sym_hashes (ibfd);
+      char grouping_tool_in_filename[] = "tmp-symbols-to-group.csv";
+      char grouping_tool_out_filename[] = "tmp-symbol-grouping.csv";
 
-      if (! is_riscv_elf (ibfd))
-	continue;
+      FILE * grouping_tool_file = fopen (grouping_tool_in_filename, FOPEN_WT);
+      BFD_ASSERT(grouping_tool_file != NULL);
 
-      symtab_hdr = &elf_symtab_hdr (ibfd);
-      symcount = ((symtab_hdr->sh_size / sizeof (ElfNN_External_Sym))
-	          - symtab_hdr->sh_info);
-
-      /* If no overlay groups were provided, see if we should call out to
-         the grouping tool.  */
-      if (!htab->ovl_tables_populated)
+      /* Emit all of the symbols which need to be grouped, plus their
+         sizes to the input .csv file for the grouping tool.  */
+      for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
 	{
-	  /* TODO: call out to grouping tool.  */
-	  /* htab->ovl_tables_populated = TRUE;  */
-	  /* ovl_max_group = ???; */
+	  unsigned int i, symcount;
+	  Elf_Internal_Shdr *symtab_hdr;
+	  struct elf_link_hash_entry **sym_hashes = elf_sym_hashes (ibfd);
+
+	  if (! is_riscv_elf (ibfd))
+	    continue;
+
+	  symtab_hdr = &elf_symtab_hdr (ibfd);
+	  symcount = ((symtab_hdr->sh_size / sizeof (ElfNN_External_Sym))
+	              - symtab_hdr->sh_info);
+
+	  for (i = 0; i < symcount; i++)
+	    {
+	      struct riscv_elf_link_hash_entry *eh =
+	          (struct riscv_elf_link_hash_entry *)sym_hashes[i];
+	      asection *sec = eh->elf.root.u.def.section;
+
+	      if (!eh->needs_overlay_group)
+		continue;
+
+	      /* A symbol which needs an overlay group will be in a section with
+	         a name of the format .text.ovlfn.<symbol name>.  */
+	      if (strncmp (sec->name, ".text.ovlfn.",
+	                   strlen(".text.ovlfn.")) != 0)
+		continue; /* FIXME: This should be an error  */
+	      const char *sym_name = sec->name + strlen(".text.ovlfn.");
+
+	      fprintf (grouping_tool_file, "%s,%lu\n", sym_name, sec->size);
+	    }
 	}
-      
-      /* No grouping file was provided, and we weren't able to call out to
-         the grouping tool to do the grouping for us, so fallback to
-         putting each symbol into a group of its own.  */
-      if (!htab->ovl_tables_populated)
+      fclose (grouping_tool_file);
+
+      /* call the grouping tool with the appropriate arguments.  */
+      pid_t grouping_tool_pid;
+      int status;
+      char * const grouping_tool_args[] =
+        {
+          "comrv-group", "-o", grouping_tool_out_filename, grouping_tool_in_filename, NULL
+        };
+
+      grouping_tool_pid = fork();
+      if (grouping_tool_pid == -1)
+        {
+          _bfd_error_handler (_("Failed to spawn grouping tool "
+                                "process"));
+        }
+      else if (grouping_tool_pid == 0)
+        {
+	  /* Initialize grouping tool process.  */
+          if (execve(grouping_tool_args[0], grouping_tool_args, NULL) == -1)
+            {
+              _bfd_error_handler (_("Grouping tool child process "
+                                    "failed"));
+              bfd_set_error (bfd_error_bad_value);
+              return FALSE;
+            }
+        }
+      else
+        {
+          /* Wait for the grouping tool to finish.  */
+          while (waitpid(grouping_tool_pid, &status, 0) != grouping_tool_pid)
+            continue;
+
+          /* Populate the tables based on the output from the grouping tool.  */
+          bfd_boolean ret;
+	  FILE * grouping_tool_out_file =
+	      fopen (grouping_tool_out_filename, FOPEN_RT);
+	  if (!grouping_tool_out_file)
+	    {
+	      _bfd_error_handler (_("Failed to open output file from grouping "
+				    "tool: %s"), grouping_tool_out_filename);
+	      bfd_set_error (bfd_error_bad_value);
+	      return FALSE;
+	    }
+	  ret = riscv_parse_grouping_file (grouping_tool_out_file,
+	                                   &htab->ovl_func_table,
+                                           &htab->ovl_group_table);
+          if (!ret)
+            {
+              _bfd_error_handler (_("Failed to create overlay grouping "
+                                    "table from groupings returned from "
+                                    "grouping tool."));
+              bfd_set_error (bfd_error_bad_value);
+              return FALSE;
+            }
+	}
+      htab->ovl_tables_populated = TRUE;
+    }
+
+  /* No grouping file was provided, and we weren't able to call out to
+     the grouping tool to do the grouping for us, so fallback to
+     putting each symbol into a group of its own.  */
+  if (!htab->ovl_tables_populated)
+    {
+      for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
 	{
+	  unsigned int i, symcount;
+	  Elf_Internal_Shdr *symtab_hdr;
+	  struct elf_link_hash_entry **sym_hashes = elf_sym_hashes (ibfd);
+
+	  if (! is_riscv_elf (ibfd))
+	    continue;
+
+	  symtab_hdr = &elf_symtab_hdr (ibfd);
+	  symcount = ((symtab_hdr->sh_size / sizeof (ElfNN_External_Sym))
+	              - symtab_hdr->sh_info);
+
 	  unsigned next_group = 0;
 	  for (i = 0; i < symcount; i++)
 	    {
@@ -2054,25 +2113,29 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 		  return FALSE;
 		}
 
-	      /* Get the newly created group entry and update its size. The
-	         other fields (padded size and .ovlgrpdata offset) will be
-		 updated later.  */
-	      struct riscv_ovl_group_hash_entry *group_entry =
-		  riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
-					       next_group_str, FALSE, FALSE);
-	      BFD_ASSERT (group_entry != NULL);
-	      group_entry->group_size = sec->size;
-
 	      /* The next symbol will be placed in the next group.  */
-	      ovl_max_group = next_group;
 	      next_group += 1;
 	    }
 	  htab->ovl_tables_populated = TRUE;
 	}
+    }
+
+  BFD_ASSERT (htab->ovl_tables_populated == TRUE);
+  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+    {
+      unsigned int i, symcount;
+      Elf_Internal_Shdr *symtab_hdr;
+      struct elf_link_hash_entry **sym_hashes = elf_sym_hashes (ibfd);
+
+      if (! is_riscv_elf (ibfd))
+	continue;
+
+      symtab_hdr = &elf_symtab_hdr (ibfd);
+      symcount = ((symtab_hdr->sh_size / sizeof (ElfNN_External_Sym))
+	          - symtab_hdr->sh_info);
 
       /* Iterate through the input symbols and if they are allocated to an
          overlay group allocate them to the next offset in that group.  */
-      BFD_ASSERT (htab->ovl_tables_populated == TRUE);
       for (i = 0; i < symcount; i++)
 	{
 	  struct riscv_elf_link_hash_entry *eh =
@@ -2093,9 +2156,9 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 		  bfd_set_error (bfd_error_bad_value);
 		  return FALSE;
 		}
+	      else
+		continue;
 	    }
-	  else
-	    continue;
 
 	  const char *sym_name = sec->name + strlen(".text.ovlfn.");
 
@@ -2119,6 +2182,32 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 	  if (sym_groups == NULL)
 	    continue;
 
+	  /* If this is in multiple groups, then a multigroup entry needs
+	     to be allocated.  */
+	  if (sym_groups->multigroup == TRUE)
+	    {
+	      /* First make sure that the multigroup table section has
+	         been created.  */
+	      BFD_ASSERT (htab->sovlmultigroup != NULL);
+
+	      /* Calculate the size of the entry in the multigroup
+	         table. A multigroup entry consists of a list of tokens
+	         (4-bytes each) followed by a 4-byte 0 terminator.  */
+	      int multigroup_entry_size;
+	      struct riscv_ovl_func_group_info *func_group_info;
+
+	      multigroup_entry_size = 0;
+	      for (func_group_info = sym_groups->groups; 
+		   func_group_info != NULL;
+		   func_group_info = func_group_info->next)
+		multigroup_entry_size += 4;
+	      /* NULL terminator.  */
+	      multigroup_entry_size += 4;
+
+	      sym_groups->multigroup_offset = htab->sovlmultigroup->size;
+	      htab->sovlmultigroup->size += multigroup_entry_size;
+	    }
+
 	  char group_id_str[24];
 	  struct riscv_ovl_func_group_info *func_group_info;
 	  for (func_group_info = sym_groups->groups; func_group_info != NULL;
@@ -2137,7 +2226,7 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 	         group. This corresponds to the current size of the output
 	         section.  */
 	      func_group_info->offset = group_entry->group_size;
-	      /* Allocate space in the output section for the contents of the
+	      /* Allocate space in the output group for the contents of the
 	         input section corresponding to the symbol.  */
 	      group_entry->group_size += sec->size;
 
@@ -2153,6 +2242,12 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 	    }
 	}
     }
+
+  /* Now the size of any multigroups has been determined, so space for the
+     multigroup table can be allocated.  */
+  if (htab->sovlmultigroup)
+    htab->sovlmultigroup->contents =
+	(unsigned char *)bfd_zalloc (output_bfd, htab->sovlmultigroup->size);
 
   fprintf(stderr, "Pre-size Table\n===========\n");
   riscv_print_group_table (&htab->ovl_group_table);
@@ -3830,7 +3925,7 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 	    riscv_ovl_group_hash_lookup (&htab->ovl_group_table, group_id_str,
 					 FALSE, FALSE);
 	  if (group_entry)
-	    offset += group_entry->group_size;
+	    offset += group_entry->padded_group_size;
 	}
     }
 

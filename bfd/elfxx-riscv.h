@@ -105,3 +105,7 @@ riscv_isa_ext_class_t
 riscv_get_prefix_class (const char *);
 
 FILE * riscv_grouping_file;
+
+bfd_boolean riscv_use_grouping_tool;
+char riscv_grouping_tool_args[256];
+

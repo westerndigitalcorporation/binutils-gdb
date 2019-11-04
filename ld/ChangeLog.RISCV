@@ -1,0 +1,4 @@
+2019-11-04  Simon Cook  <simon.cook@embecosm.com>
+
+	* ld/emultempl/riscvelf.em (riscv_elf_before_allocation): Added.
+

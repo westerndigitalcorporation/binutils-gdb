@@ -32,6 +32,29 @@ riscv_elf_before_allocation (void)
 {
   gld${EMULATION_NAME}_before_allocation ();
 
+  LANG_FOR_EACH_INPUT_STATEMENT(is)
+  {
+    asection *sec = is->the_bfd->sections;
+    while (sec != NULL)
+      {
+	const char *secname = sec->name;
+	const char *dstname = sec->output_section ? sec->output_section->name
+	  : "";
+	fprintf(stderr, "* '%s': '%s' -> '%s'\n", is->filename, secname,
+		dstname);
+
+	/* Produce an error if the input section name starts with ".text.ovlfn",
+         and the output name is not ".ovlallfns".  */
+	if (strncmp (secname, ".text.ovlfn", strlen(".text.ovlfn")) == 0 &&
+	    strcmp (dstname, ".ovlallfns"))
+          {
+            einfo(_("%F%P: Input section %s not correctly placed in"
+		    ".ovlallfns\n"), secname);
+          }
+	sec = sec->next;
+      }
+  }
+
   if (link_info.discard == discard_sec_merge)
     link_info.discard = discard_l;
 

@@ -143,7 +143,9 @@ PARSE_AND_LIST_ARGS_CASES='
 	einfo (_("--grouping-tool-args provided, but --grouping-file already "
 	         "specified"), optarg);
       riscv_use_grouping_tool = TRUE;
+      riscv_grouping_tool_args = malloc (strlen (optarg) + 1);
       strcpy(riscv_grouping_tool_args, optarg);
+      riscv_grouping_tool_args[strlen (optarg)] = '\0';
       break;
 '
 

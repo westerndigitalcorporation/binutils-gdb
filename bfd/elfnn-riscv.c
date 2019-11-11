@@ -2002,10 +2002,45 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
       /* call the grouping tool with the appropriate arguments.  */
       pid_t grouping_tool_pid;
       int status;
-      char * const grouping_tool_args[] =
-        {
-          "comrv-group", "-o", grouping_tool_out_filename, grouping_tool_in_filename, NULL
-        };
+
+      /* Arguments in riscv_grouping_tool_args are comma separate, so there
+         will be one more argument than the number of commas.  */
+      int n_extra_args = 1;
+      for (int i = 0; i < (int)strlen (riscv_grouping_tool_args); i++)
+	if (riscv_grouping_tool_args[i] == ',')
+	  n_extra_args++;
+
+      /* Build argv for the grouping tool. */
+      int n_fixed_args = 5;
+      char **grouping_tool_argv =
+	  malloc ((n_fixed_args + n_extra_args) * sizeof (*grouping_tool_argv));
+
+      grouping_tool_argv[0] = "comrv-group";
+      /* Copy the extra arguments from riscv_group_tools_args, each argument
+         is separated by a ',' */
+      const char *arg_start = riscv_grouping_tool_args;
+      for (int i = 0; i < n_extra_args; i++)
+	{
+	  const char *arg_end = strchr (arg_start, ',');
+	  int arg_len;
+	  if (arg_end == NULL)
+	    arg_len = strlen (arg_start);
+	  else
+	    arg_len = arg_end - arg_start;
+
+	  char *tmp_arg = malloc (arg_len + 1);
+	  strncpy (tmp_arg, arg_start, arg_len);
+          tmp_arg[arg_len] = '\0';
+
+	  grouping_tool_argv[i + 1] = tmp_arg;
+	  arg_start = arg_end + 1;
+	}
+      /* Fixed arguments on the end.  */
+      grouping_tool_argv[1 + n_extra_args + 0] = "-o";
+      grouping_tool_argv[1 + n_extra_args + 1] = grouping_tool_out_filename;
+      grouping_tool_argv[1 + n_extra_args + 2] = grouping_tool_in_filename;
+      grouping_tool_argv[1 + n_extra_args + 3] = NULL;
+      BFD_ASSERT ((1 + n_extra_args + 3) < (n_fixed_args + n_extra_args));
 
       grouping_tool_pid = fork();
       if (grouping_tool_pid == -1)
@@ -2016,7 +2051,7 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
       else if (grouping_tool_pid == 0)
         {
 	  /* Initialize grouping tool process.  */
-          if (execve(grouping_tool_args[0], grouping_tool_args, NULL) == -1)
+          if (execve(grouping_tool_argv[0], grouping_tool_argv, NULL) == -1)
             {
               _bfd_error_handler (_("Grouping tool child process "
                                     "failed"));

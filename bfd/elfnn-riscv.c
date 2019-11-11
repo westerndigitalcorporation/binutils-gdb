@@ -2287,9 +2287,12 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 
   /* The final size of the output section is now known, allocate the
      contents.  */
-  htab->sovlgroupdata->size = next_group_offset;
-  htab->sovlgroupdata->contents =
-      (unsigned char *)bfd_alloc (output_bfd, htab->sovlgroupdata->size);
+  if (htab->sovlgroupdata)
+    {
+      htab->sovlgroupdata->size = next_group_offset;
+      htab->sovlgroupdata->contents =
+          (unsigned char *)bfd_alloc (output_bfd, htab->sovlgroupdata->size);
+    }
 
   fprintf(stderr, "Final Table\n===========\n");
   riscv_print_group_table (&htab->ovl_group_table);

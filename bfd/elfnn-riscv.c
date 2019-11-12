@@ -85,9 +85,12 @@ struct riscv_elf_link_hash_entry
   /* Track whether this symbol needs an overlay multigroup entry.  */
   int needs_ovlmultigroup_entry;
 
-  /* Track whether this symbols is referred to my an overlay relocation,
+  /* Track whether this symbols is referred to by an overlay relocation,
      and therefore needs to exist in at least one overlay group.  */
   int needs_overlay_group;
+
+  /* Track whether this symbol is referred to by a non-overlay relocation.  */
+  int non_overlay_reference;
 
   /* Track whether this symbol has been automatically assigned its overlay
      group.  */
@@ -848,6 +851,7 @@ link_hash_newfunc (struct bfd_hash_entry *entry,
       eh->needs_ovlplt_entry = FALSE;
       eh->needs_ovlmultigroup_entry = FALSE;
       eh->needs_overlay_group = FALSE;
+      eh->non_overlay_reference = FALSE;
       eh->overlay_group_auto_assigned = FALSE;
       eh->overlay_groups_resolved = FALSE;
     }
@@ -1359,10 +1363,24 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	    {
 	      h->needs_plt = 1;
 	      h->plt.refcount += 1;
+
+	      /* Note that this symbol as a non-overlay function.  */
+	      struct riscv_elf_link_hash_entry *eh =
+		  (struct riscv_elf_link_hash_entry *)h;
+	      eh->non_overlay_reference = TRUE;
 	    }
 	  break;
 
 	case R_RISCV_CALL:
+	  if (h != NULL)
+	    {
+	      /* Note that this symbol as a non-overlay function.  */
+	      struct riscv_elf_link_hash_entry *eh =
+		  (struct riscv_elf_link_hash_entry *)h;
+	      eh->non_overlay_reference = TRUE;
+	    }
+	  // fallthrough
+
 	case R_RISCV_JAL:
 	case R_RISCV_BRANCH:
 	case R_RISCV_RVC_BRANCH:
@@ -1516,6 +1534,19 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 
 	default:
 	  break;
+	}
+
+      if (h)
+	{
+	  struct riscv_elf_link_hash_entry *eh =
+	      (struct riscv_elf_link_hash_entry *)h;
+	  if (eh->needs_overlay_group && eh->non_overlay_reference)
+	    {
+	      (*_bfd_error_handler) (_("%pB: Symbol '%s` referred to by both "
+	                               "overlay and non-overlay relocations"),
+	                             abfd, h->root.root.string);
+	      return FALSE;
+	    }
 	}
     }
 
@@ -2248,8 +2279,21 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 	      bfd_set_error (bfd_error_bad_value);
 	      return FALSE;
 	    }
+
 	  if (sym_groups == NULL)
 	    continue;
+
+	  /* The symbol has been assigned to an overlay group, but there
+	     also exist non-overlay references to it!.  */
+	  if (eh->non_overlay_reference)
+	    {
+	      _bfd_error_handler (_("Symbol '%s` is assigned to an overlay "
+	                            "group, but is referenced by a non-overlay "
+	                            "relocation."),
+	                            sym_name);
+	      bfd_set_error (bfd_error_bad_value);
+	      return FALSE;
+	    }
 
 	  /* If this is in multiple groups, then a multigroup entry needs
 	     to be allocated.  */

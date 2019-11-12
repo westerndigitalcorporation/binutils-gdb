@@ -88,6 +88,14 @@ struct riscv_elf_link_hash_entry
   /* Track whether this symbols is referred to my an overlay relocation,
      and therefore needs to exist in at least one overlay group.  */
   int needs_overlay_group;
+
+  /* Track whether this symbol has been automatically assigned its overlay
+     group.  */
+  int overlay_group_auto_assigned;
+
+  /* Track whether this symbol has already been handled and any
+     overlay groups have already been generated.  */
+  int overlay_groups_resolved;
 };
 
 #define riscv_elf_hash_entry(ent) \
@@ -840,6 +848,8 @@ link_hash_newfunc (struct bfd_hash_entry *entry,
       eh->needs_ovlplt_entry = FALSE;
       eh->needs_ovlmultigroup_entry = FALSE;
       eh->needs_overlay_group = FALSE;
+      eh->overlay_group_auto_assigned = FALSE;
+      eh->overlay_groups_resolved = FALSE;
     }
 
   return entry;
@@ -2119,6 +2129,19 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 	      if (!eh->needs_overlay_group)
 		continue;
 
+	      /* Skip this symbols if it's not a definition. This avoids
+	         accidentally assigning the same symbol more than once. */
+	      if (eh->elf.root.type != bfd_link_hash_defined
+	          && eh->elf.root.type != bfd_link_hash_defweak)
+		continue;
+
+	      /* Also skip the symbol if it's already had its overlay
+	         group assigned.  */
+	      if (eh->overlay_group_auto_assigned == TRUE)
+		continue;
+	      else
+		eh->overlay_group_auto_assigned = TRUE;
+
 	      /* A symbol which needs an overlay group will be in a section with
 	         a name of the format .text.ovlfn.<symbol name>.  */
 	      if (strncmp (sec->name, ".text.ovlfn.",
@@ -2176,6 +2199,17 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 	  struct riscv_elf_link_hash_entry *eh =
 	      (struct riscv_elf_link_hash_entry *)sym_hashes[i];
 	  asection *sec = eh->elf.root.u.def.section;
+
+          /* Skip this symbols if it's not a definition.  */
+          if (eh->elf.root.type != bfd_link_hash_defined
+              && eh->elf.root.type != bfd_link_hash_defweak)
+            continue;
+
+          /* Also skip the symbol if it's already been handled here.  */
+          if (eh->overlay_groups_resolved == TRUE)
+            continue;
+          else
+            eh->overlay_groups_resolved = TRUE;
 
 	  /* A symbol in an overlay group will be in a section with a
 	     name of the format .text.ovlfn.<symbol name>.  */

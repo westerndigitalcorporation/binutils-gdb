@@ -2340,8 +2340,11 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 	         section.  */
 	      func_group_info->offset = group_entry->group_size;
 	      /* Allocate space in the output group for the contents of the
-	         input section corresponding to the symbol.  */
+	         input section corresponding to the symbol, and re-pad to a
+		 4-byte boundary to allow offsets to remain valid.  */
 	      group_entry->group_size += sec->size;
+              if ((group_entry->group_size % 4) != 0)
+                group_entry->group_size += (group_entry->group_size % 4);
 
 	      if (group_entry->group_size + OVL_CRC_SZ
 		  > OVL_MAXGROUPSIZE)

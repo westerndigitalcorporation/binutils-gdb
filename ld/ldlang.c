@@ -507,8 +507,8 @@ compare_section (sort_type sort, asection *asec, asection *bsec)
       break;
 
     case by_user:
-      ret = (bfd_get_section_user_sort_data (bsec->owner, bsec)
-	     - bfd_get_section_user_sort_data (asec->owner, asec));
+      ret = (bfd_get_section_user_sort_data (bsec->owner, bsec, &link_info)
+	     - bfd_get_section_user_sort_data (asec->owner, asec, &link_info));
       break;
     }
 

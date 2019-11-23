@@ -2132,8 +2132,8 @@ DESCRIPTION
 .   bfd_boolean, asymbol **);
 .
 .{* Hook for getting BFD specific sort data for a section.  *}
-.#define bfd_get_section_user_sort_data(abfd, sec) \
-. BFD_SEND (abfd, _bfd_get_section_user_sort_data, (sec))
+.#define bfd_get_section_user_sort_data(abfd, sec, info) \
+. BFD_SEND (abfd, _bfd_get_section_user_sort_data, (sec, info))
 
 */
 

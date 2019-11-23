@@ -1715,14 +1715,16 @@ FUNCTION
 	bfd_generic_get_section_user_sort_data
 
 SYNOPSIS
-	int bfd_generic_get_section_user_sort_data (asection *sec);
+	int bfd_generic_get_section_user_sort_data
+    (asection *sec, struct bfd_link_info *info);
 
 DESCRIPTION
-	Get the user sort data for the section @var{sec}.
+	Get the user sort data for the section @var{sec} under @var{info}.
 */
 
 int
-bfd_generic_get_section_user_sort_data (asection *sec ATTRIBUTE_UNUSED)
+bfd_generic_get_section_user_sort_data (asection *sec ATTRIBUTE_UNUSED,
+					struct bfd_link_info *info ATTRIBUTE_UNUSED)
 {
   return 0;
 }

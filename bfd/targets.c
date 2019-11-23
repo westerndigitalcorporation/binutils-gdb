@@ -549,7 +549,7 @@ BFD_JUMP_TABLE macros.
 .					  asection *);
 .
 .  {* Get section specific sort data.  *}
-.  int (*_bfd_get_section_user_sort_data) (asection *);
+.  int (*_bfd_get_section_user_sort_data) (asection *, struct bfd_link_info *);
 .
 .  {* Routines to handle dynamic symbols and relocs.  *}
 .#define BFD_JUMP_TABLE_DYNAMIC(NAME) \

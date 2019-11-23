@@ -5951,6 +5951,98 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
     }
 }
 
+/* Function to determine sorting of input sections when being placed. For
+   overlay functions, return the offset of that section in the output.
+   NOTE: Due to how the linker uses this value, this function has to return
+         a *NEGATIVE* offset in order to sort correctly. */
+static int
+riscv_elf_overlay_sort_value (asection *s, struct bfd_link_info *info)
+{
+  struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
+  BFD_ASSERT (s != NULL);
+  BFD_ASSERT (htab != NULL);
+
+  /* If this is not an overlay function, return 1.  */
+  if (strncmp(s->name, ".text.ovlfn.", strlen(".text.ovlfn.")) != 0)
+    return 1;
+
+  /* If this is an internal padding value, look at the group number, and use
+     its offset to return an offset.  */
+  if (strncmp(s->name, ".text.ovlfn.__internal.padding.",
+              strlen(".text.ovlfn.__internal.padding.")) == 0)
+    {
+      const char *group_id_str = s->name +
+        strlen(".text.ovlfn.__internal.padding.");
+
+      struct riscv_ovl_group_hash_entry *group_entry =
+        riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
+                                     group_id_str, FALSE, FALSE);
+      BFD_ASSERT(group_entry != NULL);
+      bfd_vma padding_offset = group_entry->padded_group_size -
+	group_entry->group_size;
+      return -(group_entry->ovlgrpdata_offset + padding_offset);
+    }
+
+  /* If this is a duplicate of a function, look up its symbol hash and find the
+     offset corresponding to that group, otherwise it must be the first entry. */
+  struct riscv_ovl_func_group_info *func_group_info = NULL;
+  if (strncmp(s->name, ".text.ovlfn.__internal.duplicate.",
+              strlen(".text.ovlfn.__internal.duplicate.")) == 0)
+    {
+      const char *name_and_group = s->name +
+        strlen(".text.ovlfn.__internal.duplicate.");
+      const char *sym_name = strchr(name_and_group, '.') + 1;
+      BFD_ASSERT(sym_name != (char *)1);
+      bfd_vma group_id;
+      int matched = sscanf(name_and_group, "%lu.", &group_id);
+      BFD_ASSERT(matched = 1);
+
+      struct riscv_ovl_func_hash_entry *sym_groups =
+        riscv_ovl_func_hash_lookup (&htab->ovl_func_table,
+				    sym_name, FALSE, FALSE);
+      BFD_ASSERT(sym_groups != NULL);
+      BFD_ASSERT(sym_groups->groups != NULL);
+
+      /* Start with the second group info, since the first one cannot be a
+         duplicate.  */
+      for (func_group_info = sym_groups->groups->next;
+	   func_group_info != NULL;
+	   func_group_info = func_group_info->next)
+        {
+          if (func_group_info->id == group_id)
+            break;
+        }
+    }
+  else
+    {
+      /* Future proof against further internal types.  */
+      BFD_ASSERT(strncmp(s->name, ".text.ovlfn.__internal.",
+                         strlen(".text.ovlfn.__internal.")) != 0);
+
+      const char *sym_name = s->name + strlen(".text.ovlfn.");
+
+      /* This is not a duplicate, therefore it is the first group in the list.*/
+      struct riscv_ovl_func_hash_entry *sym_groups =
+        riscv_ovl_func_hash_lookup (&htab->ovl_func_table,
+				    sym_name, FALSE, FALSE);
+      BFD_ASSERT(sym_groups != NULL);
+      BFD_ASSERT(sym_groups->groups != NULL);
+      func_group_info = sym_groups->groups;
+    }
+
+  BFD_ASSERT(func_group_info != NULL);
+  /* func_group_info holds current group and offset, need to find full offset. */
+  char group_id_str[24];
+  sprintf(group_id_str, "%lu", func_group_info->id);
+  struct riscv_ovl_group_hash_entry *group_entry =
+    riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
+                                 group_id_str, FALSE, FALSE);
+  BFD_ASSERT(group_entry != NULL);
+  bfd_vma offset = group_entry->ovlgrpdata_offset + func_group_info->offset;
+
+  return -offset;
+}
+
 #define TARGET_LITTLE_SYM		riscv_elfNN_vec
 #define TARGET_LITTLE_NAME		"elfNN-littleriscv"
 
@@ -5961,6 +6053,7 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 #define bfd_elfNN_bfd_reloc_type_lookup	     riscv_reloc_type_lookup
 #define bfd_elfNN_bfd_merge_private_bfd_data \
   _bfd_riscv_elf_merge_private_bfd_data
+#define bfd_elfNN_bfd_get_section_user_sort_data riscv_elf_overlay_sort_value
 
 #define elf_backend_copy_indirect_symbol     riscv_elf_copy_indirect_symbol
 #define elf_backend_create_dynamic_sections  riscv_elf_create_dynamic_sections

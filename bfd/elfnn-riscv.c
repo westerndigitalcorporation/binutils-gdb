@@ -1955,7 +1955,7 @@ maybe_set_textrel (struct elf_link_hash_entry *h, void *info_p)
 }
 
 static bfd_boolean
-riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
+riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_info *info)
 {
   struct riscv_elf_link_hash_table *htab;
   bfd *dynobj;
@@ -1975,18 +1975,6 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
   s = bfd_get_section_by_name(info->output_bfd, ".ovlallfns");
   if (s != NULL)
   s->flags &= ~SEC_ALLOC;
-
-  if (elf_hash_table (info)->dynamic_sections_created)
-    {
-      /* Set the contents of the .interp section to the interpreter.  */
-      if (bfd_link_executable (info) && !info->nointerp)
-	{
-	  s = bfd_get_linker_section (dynobj, ".interp");
-	  BFD_ASSERT (s != NULL);
-	  s->size = strlen (ELFNN_DYNAMIC_INTERPRETER) + 1;
-	  s->contents = (unsigned char *) ELFNN_DYNAMIC_INTERPRETER;
-	}
-    }
 
   /* Allocate space for the overlay PLT and overlay multigroup table based on
      their sizes (determined when checking the relocs).  */
@@ -2422,6 +2410,38 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
       htab->sovlgrouptable->contents =
         (bfd_byte *) bfd_zalloc (dynobj, ovl_max_group);
     }
+  return TRUE;
+}
+
+static bfd_boolean
+riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
+{
+  fprintf(stderr, "* riscv_elf_size_dynamic_sections\n");
+  struct riscv_elf_link_hash_table *htab;
+  bfd *dynobj;
+  asection *s;
+  bfd *ibfd;
+
+  if (!riscv_elf_overlay_preprocess (output_bfd, info))
+    return FALSE;
+
+  htab = riscv_elf_hash_table (info);
+  BFD_ASSERT (htab != NULL);
+  dynobj = htab->elf.dynobj;
+  BFD_ASSERT (dynobj != NULL);
+
+  if (elf_hash_table (info)->dynamic_sections_created)
+    {
+      /* Set the contents of the .interp section to the interpreter.  */
+      if (bfd_link_executable (info) && !info->nointerp)
+	{
+	  s = bfd_get_linker_section (dynobj, ".interp");
+	  BFD_ASSERT (s != NULL);
+	  s->size = strlen (ELFNN_DYNAMIC_INTERPRETER) + 1;
+	  s->contents = (unsigned char *) ELFNN_DYNAMIC_INTERPRETER;
+	}
+    }
+
 
   /* Set up .got offsets for local syms, and space for local dynamic
      relocs.  */

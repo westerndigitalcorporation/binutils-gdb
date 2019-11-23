@@ -1071,6 +1071,7 @@ static bfd_boolean
 riscv_elf_create_dynamic_sections (bfd *dynobj,
 				   struct bfd_link_info *info)
 {
+  fprintf(stderr, "* riscv_elf_create_dynamic_sections\n");
   struct riscv_elf_link_hash_table *htab;
 
   htab = riscv_elf_hash_table (info);
@@ -5482,12 +5483,24 @@ _bfd_riscv_relax_delete (bfd *abfd,
 /* Relax a section.  Pass 0 shortens code sequences unless disabled.  Pass 1
    deletes the bytes that pass 0 made obselete.  Pass 2, which cannot be
    disabled, handles code alignment directives.  */
-
 static bfd_boolean
 _bfd_riscv_relax_section (bfd *abfd, asection *sec,
 			  struct bfd_link_info *info,
 			  bfd_boolean *again)
 {
+  static bfd_boolean pass0 = FALSE, pass1 = FALSE, pass2 = FALSE;
+  if (info->relax_pass == 0 && !pass0) {
+    pass0 = TRUE;
+    fprintf(stderr, "* _bfd_riscv_relax_section(0)\n");
+  }
+  if (info->relax_pass == 1 && !pass1) {
+    pass1 = TRUE;
+    fprintf(stderr, "* _bfd_riscv_relax_section(1)\n");
+  }
+  if (info->relax_pass == 2 && !pass2) {
+    pass2 = TRUE;
+    fprintf(stderr, "* _bfd_riscv_relax_section(2)\n");
+  }
   Elf_Internal_Shdr *symtab_hdr = &elf_symtab_hdr (abfd);
   struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
   struct bfd_elf_section_data *data = elf_section_data (sec);
@@ -5980,6 +5993,8 @@ riscv_elf_overlay_sort_value (asection *s, struct bfd_link_info *info)
       BFD_ASSERT(group_entry != NULL);
       bfd_vma padding_offset = group_entry->padded_group_size -
 	group_entry->group_size;
+      fprintf(stderr, " - Offset of %s is %lx\n", s->name,
+              group_entry->ovlgrpdata_offset + padding_offset);
       return -(group_entry->ovlgrpdata_offset + padding_offset);
     }
 
@@ -6040,6 +6055,7 @@ riscv_elf_overlay_sort_value (asection *s, struct bfd_link_info *info)
   BFD_ASSERT(group_entry != NULL);
   bfd_vma offset = group_entry->ovlgrpdata_offset + func_group_info->offset;
 
+  fprintf(stderr, " - Offset of %s is %lx\n", s->name, offset);
   return -offset;
 }
 

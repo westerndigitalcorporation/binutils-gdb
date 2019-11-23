@@ -13711,6 +13711,7 @@ bfd_elf_parse_eh_frame_entries (bfd *abfd ATTRIBUTE_UNUSED,
 bfd_boolean
 bfd_elf_gc_sections (bfd *abfd, struct bfd_link_info *info)
 {
+  fprintf(stderr, "* bfd_elf_gc_sections\n");
   bfd_boolean ok = TRUE;
   bfd *sub;
   elf_gc_mark_hook_fn gc_mark_hook;

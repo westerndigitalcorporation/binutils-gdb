@@ -659,6 +659,9 @@
 #ifndef elf_backend_mips_rtype_to_howto
 #define elf_backend_mips_rtype_to_howto		NULL
 #endif
+#ifndef bfd_elfNN_bfd_get_section_user_sort_data
+#define bfd_elfNN_bfd_get_section_user_sort_data bfd_generic_get_section_user_sort_data
+#endif
 
 /* Previously, backends could only use SHT_REL or SHT_RELA relocation
    sections, but not both.  They defined USE_REL to indicate SHT_REL

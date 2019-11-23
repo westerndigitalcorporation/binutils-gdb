@@ -93,7 +93,7 @@ typedef enum {sort_none, sort_ascending, sort_descending} sort_order;
 typedef enum
 {
   none, by_name, by_alignment, by_name_alignment, by_alignment_name,
-  by_none, by_init_priority
+  by_none, by_init_priority, by_user
 } sort_type;
 
 extern sort_type sort_section;

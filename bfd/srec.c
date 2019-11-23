@@ -1289,6 +1289,7 @@ srec_print_symbol (bfd *abfd,
 #define srec_bfd_final_link			  _bfd_generic_final_link
 #define srec_bfd_link_split_section		  _bfd_generic_link_split_section
 #define srec_bfd_link_check_relocs		  _bfd_generic_link_check_relocs
+#define srec_bfd_get_section_user_sort_data	  bfd_generic_get_section_user_sort_data
 
 const bfd_target srec_vec =
 {

@@ -992,6 +992,7 @@ tekhex_print_symbol (bfd *abfd,
 #define tekhex_bfd_link_split_section		    _bfd_generic_link_split_section
 #define tekhex_get_section_contents_in_window	    _bfd_generic_get_section_contents_in_window
 #define tekhex_bfd_link_check_relocs		    _bfd_generic_link_check_relocs
+#define tekhex_bfd_get_section_user_sort_data	    bfd_generic_get_section_user_sort_data
 
 const bfd_target tekhex_vec =
 {

@@ -469,7 +469,8 @@ BFD_JUMP_TABLE macros.
 .  NAME##_section_already_linked, \
 .  NAME##_bfd_define_common_symbol, \
 .  NAME##_bfd_link_hide_symbol, \
-.  NAME##_bfd_define_start_stop
+.  NAME##_bfd_define_start_stop, \
+.  NAME##_bfd_get_section_user_sort_data
 .
 .  int	       (*_bfd_sizeof_headers) (bfd *, struct bfd_link_info *);
 .  bfd_byte *  (*_bfd_get_relocated_section_contents) (bfd *,
@@ -546,6 +547,9 @@ BFD_JUMP_TABLE macros.
 .  struct bfd_link_hash_entry *
 .	       (*_bfd_define_start_stop) (struct bfd_link_info *, const char *,
 .					  asection *);
+.
+.  {* Get section specific sort data.  *}
+.  int (*_bfd_get_section_user_sort_data) (asection *);
 .
 .  {* Routines to handle dynamic symbols and relocs.  *}
 .#define BFD_JUMP_TABLE_DYNAMIC(NAME) \

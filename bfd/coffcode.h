@@ -5795,6 +5795,10 @@ static bfd_coff_backend_data bigobj_swap_table =
 #define coff_bfd_define_start_stop	    bfd_generic_define_start_stop
 #endif
 
+#ifndef coff_bfd_get_section_user_sort_data
+#define coff_bfd_get_section_user_sort_data bfd_generic_get_section_user_sort_data
+#endif
+
 #define CREATE_BIG_COFF_TARGET_VEC(VAR, NAME, EXTRA_O_FLAGS, EXTRA_S_FLAGS, UNDER, ALTERNATIVE, SWAP_TABLE)	\
 const bfd_target VAR =							\
 {									\

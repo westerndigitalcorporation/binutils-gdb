@@ -505,6 +505,11 @@ compare_section (sort_type sort, asection *asec, asection *bsec)
     case by_alignment:
       ret = bfd_section_alignment (bsec) - bfd_section_alignment (asec);
       break;
+
+    case by_user:
+      ret = (bfd_get_section_user_sort_data (bsec->owner, bsec)
+	     - bfd_get_section_user_sort_data (asec->owner, asec));
+      break;
     }
 
   return ret;
@@ -4944,6 +4949,11 @@ print_wild_statement (lang_wild_statement_type *w,
 
 	case by_init_priority:
 	  minfo ("SORT_BY_INIT_PRIORITY(");
+	  closing_paren = 1;
+	  break;
+
+	case by_user:
+	  minfo ("SORT_BY_USER(");
 	  closing_paren = 1;
 	  break;
 	}

@@ -130,6 +130,7 @@ static int error_index;
 %token DATA_SEGMENT_ALIGN DATA_SEGMENT_RELRO_END DATA_SEGMENT_END
 %token SORT_BY_NAME SORT_BY_ALIGNMENT SORT_NONE
 %token SORT_BY_INIT_PRIORITY
+%token SORT_BY_USER
 %token '{' '}'
 %token SIZEOF_HEADERS OUTPUT_FORMAT FORCE_COMMON_ALLOCATION OUTPUT_ARCH
 %token INHIBIT_COMMON_ALLOCATION FORCE_GROUP_ALLOCATION
@@ -520,6 +521,11 @@ section_name_spec:
 			{
 			  $$ = $3;
 			  $$.sorted = by_init_priority;
+			}
+	|	SORT_BY_USER '(' wildcard_maybe_exclude ')'
+			{
+			  $$ = $3;
+			  $$.sorted = by_user;
 			}
 	;
 

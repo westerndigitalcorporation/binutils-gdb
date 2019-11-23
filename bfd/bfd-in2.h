@@ -1462,6 +1462,8 @@ const char *bfd_generic_group_name (bfd *, const asection *sec);
 
 bfd_boolean bfd_generic_discard_group (bfd *abfd, asection *group);
 
+int bfd_generic_get_section_user_sort_data (asection *sec);
+
 /* Extracted from archures.c.  */
 enum bfd_architecture
 {
@@ -7200,6 +7202,9 @@ extern bfd_byte *bfd_get_relocated_section_contents
   (bfd *, struct bfd_link_info *, struct bfd_link_order *, bfd_byte *,
    bfd_boolean, asymbol **);
 
+/* Hook for getting BFD specific sort data for a section.  */
+#define bfd_get_section_user_sort_data(abfd, sec) \
+ BFD_SEND (abfd, _bfd_get_section_user_sort_data, (sec))
 bfd_boolean bfd_alt_mach_code (bfd *abfd, int alternative);
 
 bfd_vma bfd_emul_get_maxpagesize (const char *);
@@ -7597,7 +7602,8 @@ typedef struct bfd_target
   NAME##_section_already_linked, \
   NAME##_bfd_define_common_symbol, \
   NAME##_bfd_link_hide_symbol, \
-  NAME##_bfd_define_start_stop
+  NAME##_bfd_define_start_stop, \
+  NAME##_bfd_get_section_user_sort_data
 
   int         (*_bfd_sizeof_headers) (bfd *, struct bfd_link_info *);
   bfd_byte *  (*_bfd_get_relocated_section_contents) (bfd *,
@@ -7674,6 +7680,9 @@ typedef struct bfd_target
   struct bfd_link_hash_entry *
               (*_bfd_define_start_stop) (struct bfd_link_info *, const char *,
                                          asection *);
+
+  /* Get section specific sort data.  */
+  int (*_bfd_get_section_user_sort_data) (asection *);
 
   /* Routines to handle dynamic symbols and relocs.  */
 #define BFD_JUMP_TABLE_DYNAMIC(NAME) \

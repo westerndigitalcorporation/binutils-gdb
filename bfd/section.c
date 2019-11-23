@@ -1709,3 +1709,20 @@ _bfd_nowrite_set_section_contents (bfd *abfd,
 {
   return _bfd_bool_bfd_false_error (abfd);
 }
+
+/*
+FUNCTION
+	bfd_generic_get_section_user_sort_data
+
+SYNOPSIS
+	int bfd_generic_get_section_user_sort_data (asection *sec);
+
+DESCRIPTION
+	Get the user sort data for the section @var{sec}.
+*/
+
+int
+bfd_generic_get_section_user_sort_data (asection *sec ATTRIBUTE_UNUSED)
+{
+  return 0;
+}

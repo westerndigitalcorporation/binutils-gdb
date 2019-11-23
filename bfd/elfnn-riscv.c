@@ -1954,14 +1954,16 @@ maybe_set_textrel (struct elf_link_hash_entry *h, void *info_p)
   return TRUE;
 }
 
+//FIXME: Place this somewhere sane
+static unsigned ovl_max_group = 0;
 static bfd_boolean
 riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_info *info)
 {
+  fprintf(stderr, " * riscv_elf_overlay_preprocess\n");
   struct riscv_elf_link_hash_table *htab;
   bfd *dynobj;
   asection *s;
   bfd *ibfd;
-  unsigned ovl_max_group = 0;
 
   htab = riscv_elf_hash_table (info);
   BFD_ASSERT (htab != NULL);
@@ -2421,9 +2423,6 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
   bfd *dynobj;
   asection *s;
   bfd *ibfd;
-
-  if (!riscv_elf_overlay_preprocess (output_bfd, info))
-    return FALSE;
 
   htab = riscv_elf_hash_table (info);
   BFD_ASSERT (htab != NULL);
@@ -5837,6 +5836,119 @@ static int
 riscv_elf_obj_attrs_arg_type (int tag)
 {
   return (tag & 1) != 0 ? ATTR_TYPE_FLAG_STR_VAL : ATTR_TYPE_FLAG_INT_VAL;
+}
+
+/* This function is called by the LDEMUL_AFTER_CHECK_RELOCS hook.  */
+void riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info);
+void
+riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
+{
+  fprintf(stderr, "* do_overlay_stuff_elfNNlriscv\n");
+  struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
+  BFD_ASSERT (htab != NULL);
+  const struct elf_backend_data *bed = get_elf_backend_data (htab->elf.dynobj);
+
+  riscv_elf_overlay_preprocess (info->output_bfd, info);
+
+  /* For each group, create an padding section that will hold the group number
+     and SHA.  */
+  for (unsigned i = 0; i < ovl_max_group; i++)
+    {
+      char group_id_str[24];
+      sprintf (group_id_str, "%u", i);
+
+      struct riscv_ovl_group_hash_entry *group_entry =
+	riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
+				     group_id_str, FALSE, FALSE);
+      if (group_entry)
+	{
+	  flagword flags;
+	  asection *s;
+	  bfd_vma padding = group_entry->padded_group_size -
+	    group_entry->group_size;
+
+	  /* It should be the case that there is always padding for the group
+	     SHA?  */
+	  BFD_ASSERT(padding > 0);
+	  char group_sec_name[100];
+	  sprintf (group_sec_name, ".text.ovlfn.__internal.padding.%u", i);
+	  fprintf (stderr, "- Creating padding section `%s` with size 0x%lx\n",
+		   group_sec_name, padding);
+	  flags = bed->dynamic_sec_flags | SEC_READONLY | SEC_CODE;
+	  s = bfd_make_section_anyway_with_flags (htab->elf.dynobj,
+						  strdup(group_sec_name),
+						  flags);
+	  BFD_ASSERT(s != NULL);
+	  bfd_set_section_alignment (htab->elf.dynobj, s,
+				     bed->s->log_file_align);
+	  s->contents = (unsigned char *)bfd_zalloc (htab->elf.dynobj, padding);
+	  s->size = padding;
+	}
+    }
+
+  /* Create duplicate sections.  */
+  bfd *ibfd;
+  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+    {
+      unsigned int i, symcount;
+      Elf_Internal_Shdr *symtab_hdr;
+      struct elf_link_hash_entry **sym_hashes = elf_sym_hashes (ibfd);
+
+      if (! is_riscv_elf (ibfd))
+	continue;
+
+      symtab_hdr = &elf_symtab_hdr (ibfd);
+      symcount = ((symtab_hdr->sh_size / sizeof (ElfNN_External_Sym))
+	          - symtab_hdr->sh_info);
+
+      for (i = 0; i < symcount; i++)
+	{
+	  flagword flags;
+	  struct elf_link_hash_entry *h = sym_hashes[i];
+	  asection *sec = h->root.u.def.section;
+	  flags = bed->dynamic_sec_flags | SEC_READONLY | SEC_CODE;
+
+	  /* A symbol in an overlay group will be in a section with a
+	     name of the format .text.ovlfn.<symbol name>.  */
+	  if (strncmp (sec->name, ".text.ovlfn.", strlen(".text.ovlfn.")) != 0)
+	    continue;
+	  const char *sym_name = sec->name + strlen(".text.ovlfn.");
+
+	  /* Lookup all of the groups that this symbol exists in.  */
+	  struct riscv_ovl_func_hash_entry *sym_groups =
+	    riscv_ovl_func_hash_lookup (&htab->ovl_func_table,
+					sym_name, FALSE, FALSE);
+	  if (sym_groups == NULL)
+	    continue;
+
+	  /* For all but the first group in this list, create a duplicate
+	     section for that group based on the name.  */
+	  char duplicate_func_name[200];
+	  struct riscv_ovl_func_group_info *func_group_info;
+	  BFD_ASSERT(sym_groups->groups != NULL);
+	  for (func_group_info = sym_groups->groups->next;
+	       func_group_info != NULL;
+	       func_group_info = func_group_info->next)
+	    {
+	      asection *s;
+	      sprintf (duplicate_func_name,
+		       ".text.ovlfn.__internal.duplicate.%lu.%s",
+		       func_group_info->id, sym_name);
+	      fprintf (stderr,
+		       "- Creating duplicate section `%s` with size 0x%lx\n",
+		       duplicate_func_name, sec->size);
+	      s = bfd_make_section_anyway_with_flags (htab->elf.dynobj,
+						      strdup(duplicate_func_name),
+						      flags);
+	      BFD_ASSERT(s != NULL);
+	      bfd_set_section_alignment (htab->elf.dynobj, s,
+					 bed->s->log_file_align);
+	      s->contents = (unsigned char *)bfd_zalloc (htab->elf.dynobj,
+							 sec->size);
+	      s->size = sec->size;
+	    }
+	}
+    }
 }
 
 #define TARGET_LITTLE_SYM		riscv_elfNN_vec

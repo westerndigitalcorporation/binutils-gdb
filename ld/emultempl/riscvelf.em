@@ -109,6 +109,15 @@ riscv_create_output_section_statements (void)
     }
 }
 
+extern void
+riscv_elf_overlay_hook_${EMULATION_NAME}(struct bfd_link_info *info);
+
+static void
+riscv_elf_after_check_relocs (void)
+{
+  riscv_elf_overlay_hook_${EMULATION_NAME}(&link_info);
+}
+
 EOF
 
 # Define some shell vars to insert bits of code into the standard elf
@@ -152,3 +161,4 @@ PARSE_AND_LIST_ARGS_CASES='
 LDEMUL_BEFORE_ALLOCATION=riscv_elf_before_allocation
 LDEMUL_AFTER_ALLOCATION=gld${EMULATION_NAME}_after_allocation
 LDEMUL_CREATE_OUTPUT_SECTION_STATEMENTS=riscv_create_output_section_statements
+LDEMUL_AFTER_CHECK_RELOCS=riscv_elf_after_check_relocs

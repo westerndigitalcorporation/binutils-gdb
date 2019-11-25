@@ -126,18 +126,21 @@ EOF
 #
 PARSE_AND_LIST_PROLOGUE='
 #define OPTION_GROUPING_FILE		301
-#define OPTION_GROUPING_TOOL_ARGS	302
-#define OPTION_FIRST_GROUP_NUMBER	303
+#define OPTION_GROUPING_TOOL		302
+#define OPTION_GROUPING_TOOL_ARGS	303
+#define OPTION_FIRST_GROUP_NUMBER	304
 '
 
 PARSE_AND_LIST_LONGOPTS='
   { "grouping-file",      required_argument, NULL, OPTION_GROUPING_FILE },
+  { "grouping-tool",      required_argument, NULL, OPTION_GROUPING_TOOL },
   { "grouping-tool-args", required_argument, NULL, OPTION_GROUPING_TOOL_ARGS },
   { "first-group-number", required_argument, NULL, OPTION_FIRST_GROUP_NUMBER },
 '
 
 PARSE_AND_LIST_OPTIONS='
   fprintf (file, _("--grouping-file             Grouping file name\n"));
+  fprintf (file, _("--grouping-tool             Name of the grouping tool command\n"));
   fprintf (file, _("--grouping-tool-args        Arguments to the grouping tool\n"));
   fprintf (file, _("--first-group-number        First group number for autogrouping\n"));
 '
@@ -151,13 +154,23 @@ PARSE_AND_LIST_ARGS_CASES='
       if (riscv_grouping_file == NULL)
 	einfo (_("%F%P: cannot open grouping file %s\n"), optarg);
       break;
+    case OPTION_GROUPING_TOOL:
+      if (riscv_grouping_file != NULL)
+	einfo (_("--grouping-tool provided, but --grouping-file already "
+	         "specified"), optarg);
+      riscv_use_grouping_tool = TRUE;
+      riscv_grouping_tool = malloc (strlen (optarg) + 1);
+      strcpy (riscv_grouping_tool, optarg);
+      riscv_grouping_tool[strlen (optarg)] = '\0';
+      break;
+
     case OPTION_GROUPING_TOOL_ARGS:
       if (riscv_grouping_file != NULL)
 	einfo (_("--grouping-tool-args provided, but --grouping-file already "
 	         "specified"), optarg);
       riscv_use_grouping_tool = TRUE;
       riscv_grouping_tool_args = malloc (strlen (optarg) + 1);
-      strcpy(riscv_grouping_tool_args, optarg);
+      strcpy (riscv_grouping_tool_args, optarg);
       riscv_grouping_tool_args[strlen (optarg)] = '\0';
       break;
     case OPTION_FIRST_GROUP_NUMBER:

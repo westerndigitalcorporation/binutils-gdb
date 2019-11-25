@@ -2037,10 +2037,115 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
      grouping tool.  */
   if (!htab->ovl_tables_populated && riscv_use_grouping_tool)
     {
-      char grouping_tool_in_filename[] = "tmp-symbols-to-group.csv";
-      char grouping_tool_out_filename[] = "tmp-symbol-grouping.csv";
+      /* Check that the --grouping-tool option was provided.  */
+      if (!riscv_grouping_tool)
+	{
+          _bfd_error_handler (_("`--grouping-tool' option not provided, so "
+	                        "the grouping tool cannot be called."));
+	  bfd_set_error (bfd_error_bad_value);
+	  return FALSE;
+	}
+
+      /* Setup the arguments for the grouping tool.  */
+      /* Arguments in riscv_grouping_tool_args are comma separated, so there
+         will be one more argument than the number of commas.  */
+      int n_extra_args = 0;
+      if (riscv_grouping_tool_args)
+        {
+          n_extra_args = 1;
+          for (int i = 0; i < (int)strlen (riscv_grouping_tool_args); i++)
+	    if (riscv_grouping_tool_args[i] == ',')
+	      n_extra_args++;
+        }
+
+      /* Build argv for the grouping tool. */
+      int n_fixed_args = 2;
+      char **grouping_tool_argv =
+	  malloc ((n_fixed_args + n_extra_args) * sizeof (*grouping_tool_argv));
+
+      /* Command word */
+      grouping_tool_argv[0] = riscv_grouping_tool;
+
+      /* Copy the extra arguments from riscv_group_tools_args, each argument
+         is separated by a ',' */
+      const char *arg_start = riscv_grouping_tool_args;
+      for (int i = 0; i < n_extra_args; i++)
+	{
+	  const char *arg_end = strchr (arg_start, ',');
+	  int arg_len;
+	  if (arg_end == NULL)
+	    arg_len = strlen (arg_start);
+	  else
+	    arg_len = arg_end - arg_start;
+
+	  char *tmp_arg = malloc (arg_len + 1);
+	  strncpy (tmp_arg, arg_start, arg_len);
+          tmp_arg[arg_len] = '\0';
+
+	  grouping_tool_argv[i + 1] = tmp_arg;
+	  arg_start = arg_end + 1;
+	}
+
+      /* Null terminate the argv list.  */
+      int argc = 1 + n_extra_args;
+      grouping_tool_argv[argc] = NULL;
+      BFD_ASSERT (argc < (n_fixed_args + n_extra_args));
+
+      /* Search for the input and output filenames in the list of arguments
+         provided. These arguments will also be forwarded as-is to the
+	 grouping tool.  */
+      int in_file_arg_index = 0;
+      int out_file_arg_index = 0;
+      for (int i = 0; i < argc; i++)
+	{
+	  if (!strcmp(grouping_tool_argv[i], "--in-file"))
+	    in_file_arg_index = i + 1;
+	  else if (!strcmp(grouping_tool_argv[i], "--out-file"))
+	    out_file_arg_index = i + 1;
+	}
+      /* Check that both --in-file and --out-file options were provided, and
+         they were followed by file names.  */
+      if (in_file_arg_index == argc)
+	{
+          _bfd_error_handler (_("Missing file name for `--in-file' option to "
+	                        "`--grouping-tool-args'"));
+	  bfd_set_error (bfd_error_bad_value);
+	  return FALSE;
+	}
+      if (out_file_arg_index == argc)
+	{
+          _bfd_error_handler (_("Missing file name for `--out-file' option to "
+	                        "`--grouping-tool-args'"));
+	  bfd_set_error (bfd_error_bad_value);
+	  return FALSE;
+	}
+      if (in_file_arg_index == 0)
+	{
+          _bfd_error_handler (_("No option `--in-file' provided to "
+	                        "`--grouping-tool-args'"));
+	  bfd_set_error (bfd_error_bad_value);
+	  return FALSE;
+	}
+      if (out_file_arg_index == 0)
+	{
+          _bfd_error_handler (_("No option `--out-file' provided to "
+	                        "`--grouping-tool-args'"));
+	  bfd_set_error (bfd_error_bad_value);
+	  return FALSE;
+	}
+
+      char *grouping_tool_in_filename = grouping_tool_argv[in_file_arg_index];
+      char *grouping_tool_out_filename = grouping_tool_argv[out_file_arg_index];
 
       FILE * grouping_tool_file = fopen (grouping_tool_in_filename, FOPEN_WT);
+      if (!grouping_tool_file)
+	{
+	  _bfd_error_handler (_("Could not open file `%s' to write input "
+	                        "for grouping tool."),
+			      grouping_tool_in_filename);
+	  bfd_set_error (bfd_error_bad_value);
+	  return FALSE;
+	}
       BFD_ASSERT(grouping_tool_file != NULL);
 
       /* Emit all of the symbols which need to be grouped, plus their
@@ -2079,48 +2184,10 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	}
       fclose (grouping_tool_file);
 
+
       /* call the grouping tool with the appropriate arguments.  */
       pid_t grouping_tool_pid;
       int status;
-
-      /* Arguments in riscv_grouping_tool_args are comma separate, so there
-         will be one more argument than the number of commas.  */
-      int n_extra_args = 1;
-      for (int i = 0; i < (int)strlen (riscv_grouping_tool_args); i++)
-	if (riscv_grouping_tool_args[i] == ',')
-	  n_extra_args++;
-
-      /* Build argv for the grouping tool. */
-      int n_fixed_args = 5;
-      char **grouping_tool_argv =
-	  malloc ((n_fixed_args + n_extra_args) * sizeof (*grouping_tool_argv));
-
-      grouping_tool_argv[0] = "comrv-group";
-      /* Copy the extra arguments from riscv_group_tools_args, each argument
-         is separated by a ',' */
-      const char *arg_start = riscv_grouping_tool_args;
-      for (int i = 0; i < n_extra_args; i++)
-	{
-	  const char *arg_end = strchr (arg_start, ',');
-	  int arg_len;
-	  if (arg_end == NULL)
-	    arg_len = strlen (arg_start);
-	  else
-	    arg_len = arg_end - arg_start;
-
-	  char *tmp_arg = malloc (arg_len + 1);
-	  strncpy (tmp_arg, arg_start, arg_len);
-          tmp_arg[arg_len] = '\0';
-
-	  grouping_tool_argv[i + 1] = tmp_arg;
-	  arg_start = arg_end + 1;
-	}
-      /* Fixed arguments on the end.  */
-      grouping_tool_argv[1 + n_extra_args + 0] = "-o";
-      grouping_tool_argv[1 + n_extra_args + 1] = grouping_tool_out_filename;
-      grouping_tool_argv[1 + n_extra_args + 2] = grouping_tool_in_filename;
-      grouping_tool_argv[1 + n_extra_args + 3] = NULL;
-      BFD_ASSERT ((1 + n_extra_args + 3) < (n_fixed_args + n_extra_args));
 
       grouping_tool_pid = fork();
       if (grouping_tool_pid == -1)
@@ -2151,8 +2218,9 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	      fopen (grouping_tool_out_filename, FOPEN_RT);
 	  if (!grouping_tool_out_file)
 	    {
-	      _bfd_error_handler (_("Failed to open output file from grouping "
-				    "tool: %s"), grouping_tool_out_filename);
+	      _bfd_error_handler (_("Could not open file `%s' to read output "
+	                            "from grouping tool."),
+				  grouping_tool_out_filename);
 	      bfd_set_error (bfd_error_bad_value);
 	      return FALSE;
 	    }

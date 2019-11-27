@@ -2020,11 +2020,11 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 		continue;
 
 	      /* A symbol which needs an overlay group will be in a section with
-	         a name of the format .text.ovlfn.<symbol name>.  */
-	      if (strncmp (sec->name, ".text.ovlfn.",
-	                   strlen(".text.ovlfn.")) != 0)
+	         a name of the format .ovlinput.<symbol name>.  */
+	      if (strncmp (sec->name, ".ovlinput.",
+	                   strlen(".ovlinput.")) != 0)
 		continue; /* FIXME: This should be an error  */
-	      const char *sym_name = sec->name + strlen(".text.ovlfn.");
+	      const char *sym_name = sec->name + strlen(".ovlinput.");
 
 	      fprintf (grouping_tool_file, "%s,%lu\n", sym_name, sec->size);
 	    }
@@ -2165,11 +2165,11 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 		eh->overlay_group_auto_assigned = TRUE;
 
 	      /* A symbol which needs an overlay group will be in a section with
-	         a name of the format .text.ovlfn.<symbol name>.  */
-	      if (strncmp (sec->name, ".text.ovlfn.",
-	                   strlen(".text.ovlfn.")) != 0)
+	         a name of the format .ovlinput.<symbol name>.  */
+	      if (strncmp (sec->name, ".ovlinput.",
+	                   strlen(".ovlinput.")) != 0)
 		continue;
-	      const char *sym_name = sec->name + strlen(".text.ovlfn.");
+	      const char *sym_name = sec->name + strlen(".ovlinput.");
 
 	      /* Put the symbol in the next available group.  */
 	      char next_group_str[24];
@@ -2234,15 +2234,15 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
             eh->overlay_groups_resolved = TRUE;
 
 	  /* A symbol in an overlay group will be in a section with a
-	     name of the format .text.ovlfn.<symbol name>.  */
-	  if (strncmp (sec->name, ".text.ovlfn.", strlen(".text.ovlfn.")) != 0)
+	     name of the format .ovlinput.<symbol name>.  */
+	  if (strncmp (sec->name, ".ovlinput.", strlen(".ovlinput.")) != 0)
 	    {
 	      if (eh->needs_overlay_group)
 		{
 		  _bfd_error_handler (_("A symbol in section '%s` is in an "
 		                        "overlay group, but the containing "
 		                        "section does not have a "
-		                        "'.text.ovlfn.` prefix."),
+		                        "'.ovlinput.` prefix."),
 		                      sec->name);
 		  bfd_set_error (bfd_error_bad_value);
 		  return FALSE;
@@ -2251,7 +2251,7 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 		continue;
 	    }
 
-	  const char *sym_name = sec->name + strlen(".text.ovlfn.");
+	  const char *sym_name = sec->name + strlen(".ovlinput.");
 
 	  /* Lookup all of the groups that this symbol exists in.  */
 	  struct riscv_ovl_func_hash_entry *sym_groups =
@@ -4090,10 +4090,10 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 	  asection *sec = h->root.u.def.section;
 
 	  /* A symbol in an overlay group will be in a section with a
-	     name of the format .text.ovlfn.<symbol name>.  */
-	  if (strncmp (sec->name, ".text.ovlfn.", strlen(".text.ovlfn.")) != 0)
+	     name of the format .ovlinput.<symbol name>.  */
+	  if (strncmp (sec->name, ".ovlinput.", strlen(".ovlinput.")) != 0)
 	    continue;
-	  const char *sym_name = sec->name + strlen(".text.ovlfn.");
+	  const char *sym_name = sec->name + strlen(".ovlinput.");
 
 	  /* Lookup all of the groups that this symbol exists in.  */
 	  struct riscv_ovl_func_hash_entry *sym_groups =
@@ -5884,7 +5884,7 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 	     SHA?  */
 	  BFD_ASSERT(padding > 0);
 	  char group_sec_name[100];
-	  sprintf (group_sec_name, ".text.ovlfn.__internal.padding.%u", i);
+	  sprintf (group_sec_name, ".ovlinput.__internal.padding.%u", i);
 	  fprintf (stderr, "- Creating padding section `%s` with size 0x%lx\n",
 		   group_sec_name, padding);
 	  flags = bed->dynamic_sec_flags | SEC_READONLY | SEC_CODE;
@@ -5922,10 +5922,10 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 	  flags = bed->dynamic_sec_flags | SEC_READONLY | SEC_CODE;
 
 	  /* A symbol in an overlay group will be in a section with a
-	     name of the format .text.ovlfn.<symbol name>.  */
-	  if (strncmp (sec->name, ".text.ovlfn.", strlen(".text.ovlfn.")) != 0)
+	     name of the format .ovlinput.<symbol name>.  */
+	  if (strncmp (sec->name, ".ovlinput.", strlen(".ovlinput.")) != 0)
 	    continue;
-	  const char *sym_name = sec->name + strlen(".text.ovlfn.");
+	  const char *sym_name = sec->name + strlen(".ovlinput.");
 
 	  /* Lookup all of the groups that this symbol exists in.  */
 	  struct riscv_ovl_func_hash_entry *sym_groups =
@@ -5945,7 +5945,7 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 	    {
 	      asection *s;
 	      sprintf (duplicate_func_name,
-		       ".text.ovlfn.__internal.duplicate.%lu.%s",
+		       ".ovlinput.__internal.duplicate.%lu.%s",
 		       func_group_info->id, sym_name);
 	      fprintf (stderr,
 		       "- Creating duplicate section `%s` with size 0x%lx\n",
@@ -5976,16 +5976,16 @@ riscv_elf_overlay_sort_value (asection *s, struct bfd_link_info *info)
   BFD_ASSERT (htab != NULL);
 
   /* If this is not an overlay function, return 1.  */
-  if (strncmp(s->name, ".text.ovlfn.", strlen(".text.ovlfn.")) != 0)
+  if (strncmp(s->name, ".ovlinput.", strlen(".ovlinput.")) != 0)
     return 1;
 
   /* If this is an internal padding value, look at the group number, and use
      its offset to return an offset.  */
-  if (strncmp(s->name, ".text.ovlfn.__internal.padding.",
-              strlen(".text.ovlfn.__internal.padding.")) == 0)
+  if (strncmp(s->name, ".ovlinput.__internal.padding.",
+              strlen(".ovlinput.__internal.padding.")) == 0)
     {
       const char *group_id_str = s->name +
-        strlen(".text.ovlfn.__internal.padding.");
+        strlen(".ovlinput.__internal.padding.");
 
       struct riscv_ovl_group_hash_entry *group_entry =
         riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
@@ -6001,11 +6001,11 @@ riscv_elf_overlay_sort_value (asection *s, struct bfd_link_info *info)
   /* If this is a duplicate of a function, look up its symbol hash and find the
      offset corresponding to that group, otherwise it must be the first entry. */
   struct riscv_ovl_func_group_info *func_group_info = NULL;
-  if (strncmp(s->name, ".text.ovlfn.__internal.duplicate.",
-              strlen(".text.ovlfn.__internal.duplicate.")) == 0)
+  if (strncmp(s->name, ".ovlinput.__internal.duplicate.",
+              strlen(".ovlinput.__internal.duplicate.")) == 0)
     {
       const char *name_and_group = s->name +
-        strlen(".text.ovlfn.__internal.duplicate.");
+        strlen(".ovlinput.__internal.duplicate.");
       const char *sym_name = strchr(name_and_group, '.') + 1;
       BFD_ASSERT(sym_name != (char *)1);
       bfd_vma group_id;
@@ -6031,10 +6031,10 @@ riscv_elf_overlay_sort_value (asection *s, struct bfd_link_info *info)
   else
     {
       /* Future proof against further internal types.  */
-      BFD_ASSERT(strncmp(s->name, ".text.ovlfn.__internal.",
-                         strlen(".text.ovlfn.__internal.")) != 0);
+      BFD_ASSERT(strncmp(s->name, ".ovlinput.__internal.",
+                         strlen(".ovlinput.__internal.")) != 0);
 
-      const char *sym_name = s->name + strlen(".text.ovlfn.");
+      const char *sym_name = s->name + strlen(".ovlinput.");
 
       /* This is not a duplicate, therefore it is the first group in the list.*/
       struct riscv_ovl_func_hash_entry *sym_groups =

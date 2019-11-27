@@ -42,9 +42,9 @@ riscv_elf_before_allocation (void)
 	const char *dstname = sec->output_section ? sec->output_section->name
 	  : "";
 
-	/* Produce an error if the input section name starts with ".text.ovlfn",
+	/* Produce an error if the input section name starts with ".ovlinput",
          and the output name is not ".ovlallfns".  */
-	if (strncmp (secname, ".text.ovlfn", strlen(".text.ovlfn")) == 0 &&
+	if (strncmp (secname, ".ovlinput", strlen(".ovlinput")) == 0 &&
 	    strcmp (dstname, ".ovlallfns"))
           {
 	    fprintf(stderr, "* '%s': '%s' -> '%s'\n", is->filename, secname,

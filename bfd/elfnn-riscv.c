@@ -5842,6 +5842,32 @@ riscv_elf_object_p (bfd *abfd)
   return TRUE;
 }
 
+static bfd_boolean
+riscv_elf_create_ovl_dup_symbol (struct bfd_link_info *info, const char *name,
+				 bfd_vma group, asection *s, bfd_vma size)
+{
+  char symbol_name[100];
+  struct bfd_link_hash_entry *bfdh;
+  struct elf_link_hash_entry *elfh;
+  bfd_boolean res;
+
+  sprintf (symbol_name, "%s$group%lu", name, group);
+
+  /* Create a new symbol */
+  bfdh = NULL;
+  res = _bfd_generic_link_add_one_symbol (info, s->owner, symbol_name,
+					  BSF_GLOBAL, s, size, NULL, TRUE,
+					  FALSE, &bfdh);
+  if (!res)
+    return FALSE;
+
+  /* Set ELF flags */
+  elfh = (struct elf_link_hash_entry *)bfdh;
+  elfh->type = ELF_ST_INFO (STB_GLOBAL, STT_FUNC);
+  elfh->size = size;
+  return TRUE;
+}
+
 /* Determine whether an object attribute tag takes an integer, a
    string or both.  */
 
@@ -5959,6 +5985,10 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 	      s->contents = (unsigned char *)bfd_zalloc (htab->elf.dynobj,
 							 sec->size);
 	      s->size = sec->size;
+	      /* Create a symbol for this duplicate.  */
+	      riscv_elf_create_ovl_dup_symbol (info, sym_name,
+					       func_group_info->id,
+					       s, /* FIXME: Size (relax) */ 0);
 	    }
 	}
     }

@@ -812,6 +812,53 @@ riscv_emit_ovl_padding_and_crc_entry (struct riscv_ovl_group_hash_entry *entry,
   return TRUE;
 }
 
+/* The same function as RISCV_EMIT_OVL_PADDING_AND_CRC_ENTRY, but for split
+   up groups. This differs in that our output section is made of many inputs,
+   and these need writing to individually.  */
+static bfd_boolean
+riscv_emit_ovl_padding_and_crc_entry2 (struct riscv_ovl_group_hash_entry *entry,
+				      struct bfd_and_link_info_pair *pair)
+{
+  bfd *output_bfd = pair->bfd;
+  fprintf (stderr, "Group %s*: ", entry->root.string);
+
+  if (entry->group_size == 0)
+  {
+	  fprintf(stderr, "(empty, skipping)\n");
+	  return TRUE;
+	}
+
+  /* Cache a copy of the current .ovlgrpdata section, such that we can iterate
+     over all its contents without having to look at each subsection. */
+  asection *sec = bfd_get_section_by_name (output_bfd, ".ovlgrpdata");
+  BFD_ASSERT(sec != NULL);
+  void *cached_section = malloc (sec->size);
+  bfd_boolean res = bfd_get_section_contents (output_bfd, sec, cached_section,
+                                              0, sec->size);
+  BFD_ASSERT (res);
+
+  /* Calculate CRC.  */
+  /* TODO: [TC12], but use libiberty's xcrc32 as the default.  */
+  unsigned int crc = 0xffffffff;
+  crc = xcrc32(cached_section + entry->ovlgrpdata_offset,
+		           entry->padded_group_size - OVL_CRC_SZ, crc);
+  fprintf(stderr, "%x", crc);
+
+  /* Load the padding section and place the value in the last 32-bits.  */
+  char group_sec_name[100];
+  sprintf (group_sec_name, ".ovlinput.__internal.padding.%u", entry->group);
+  struct bfd_link_info *info = pair->info;
+  struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
+  asection *padding_sec = bfd_get_section_by_name (htab->elf.dynobj, group_sec_name);
+  BFD_ASSERT(padding_sec != NULL);
+  BFD_ASSERT(padding_sec->contents != NULL);
+  bfd_put_32 (output_bfd, crc, padding_sec->contents + padding_sec->size - OVL_CRC_SZ);
+
+  free (cached_section);
+  fprintf (stderr, "\n");
+  return TRUE;
+}
+
 /* Calculate and insert all overlay group sections CRC values.  */
 static void
 riscv_emit_ovl_padding_and_crc (struct bfd_hash_table *table,
@@ -820,6 +867,8 @@ riscv_emit_ovl_padding_and_crc (struct bfd_hash_table *table,
   fprintf(stderr, "Calculating CRCs\n================\n");
   riscv_ovl_group_hash_traverse (table, riscv_emit_ovl_padding_and_crc_entry,
 				 pair);
+  riscv_ovl_group_hash_traverse (table, riscv_emit_ovl_padding_and_crc_entry2,
+                                 pair);
 }
 
 /* Create an entry in an RISC-V ELF linker hash table.  */
@@ -5922,6 +5971,9 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 				     bed->s->log_file_align);
 	  s->contents = (unsigned char *)bfd_zalloc (htab->elf.dynobj, padding);
 	  s->size = padding;
+    /* Fill the padding section with the group number now.  */
+    for (bfd_vma offs = 0; offs < padding; offs += 2)
+      bfd_put_16 (htab->elf.dynobj, i, s->contents + offs);
 	}
     }
 

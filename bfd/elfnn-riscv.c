@@ -824,7 +824,8 @@ riscv_build_current_ovl_section (struct bfd_link_info *info, void **data)
   *data = section_data;
   /* Start by loading the entire contents of this section, this will cover non
      dynamic sections.  */
-  bfd_get_section_contents (output_bfd, sec, section_data, 0, sec->size);
+  bfd_boolean res = bfd_get_section_contents (output_bfd, sec, section_data, 0, sec->size);
+  BFD_ASSERT(res == TRUE);
 
   /* Look at all the input sections, if the output section matches this, then
      load the contents into that section.  */

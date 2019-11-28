@@ -4196,6 +4196,14 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 					       group_id_str, FALSE, FALSE);
 	      BFD_ASSERT (group_entry != NULL);
 
+          /* Nasty hack: When the .ovlgrpdata output section is created it
+             is created with its flags initialized to the same flags as the
+             last constituent input section. Because the last input section
+             is a dynamic section, the output section erroneously picks up the
+             SEC_IN_MEMORY flag which causes bfd_get_section_contents to
+             fail when it tries to read from the "contents" of .ovlgrpdata.  */
+        sec->output_section->flags &= ~ SEC_IN_MEMORY;
+
 	      /* Copy the contents from the output section .ovlallfns, to the
 	         appropriate overlay group section for this symbol.  */
 	      bfd_get_section_contents (
@@ -4207,6 +4215,48 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 	    }
 	}
     }
+
+  unsigned char *current_data;
+  riscv_build_current_ovl_section(info, (void*)&current_data);
+  BFD_ASSERT(current_data != NULL);
+  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+  {
+    asection *isec;
+    for (isec = ibfd->sections; isec != NULL; isec = isec->next)
+    {
+      if (strncmp(isec->name, ".ovlinput.", strlen(".ovlinput.")) == 0)
+      {
+        struct riscv_ovl_func_hash_entry *sym_groups =
+	        riscv_ovl_func_hash_lookup (&htab->ovl_func_table,
+					  isec->name + strlen(".ovlinput."), FALSE, FALSE);
+	      if (sym_groups == NULL)
+	        continue;
+
+        struct riscv_ovl_func_group_info *func_group_info;
+	      for (func_group_info = sym_groups->groups->next; func_group_info != NULL;
+	           func_group_info = func_group_info->next) {
+          char duplicate_func_name[200];
+          sprintf (duplicate_func_name, ".ovlinput.__internal.duplicate.%lu.%s", func_group_info->id, isec->name + strlen(".ovlinput."));
+          fprintf(stderr, "- Copy of %s in group %lu (%s)\n", isec->name, func_group_info->id, duplicate_func_name);
+          asection *dup_sec = bfd_get_section_by_name(htab->elf.dynobj, duplicate_func_name);
+          BFD_ASSERT(dup_sec != NULL);
+
+          /* Nasty hack: When the .ovlgrpdata output section is created it
+             is created with its flags initialized to the same flags as the
+             last constituent input section. Because the last input section
+             is a dynamic section, the output section erroneously picks up the
+             SEC_IN_MEMORY flag which causes bfd_get_section_contents to
+             fail when it tries to read from the "contents" of .ovlgrpdata.  */
+          isec->output_section->flags &= ~ SEC_IN_MEMORY;
+
+          bfd_get_section_contents (output_bfd, isec->output_section,
+                                    dup_sec->contents, isec->output_offset,
+                                    dup_sec->size);
+        }
+      }
+    }
+  }
+  free(current_data);
 
   /* Now all functions have been copied, calculate and insert the overlay
      section padding and CRC.  */

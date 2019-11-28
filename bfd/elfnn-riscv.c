@@ -812,6 +812,41 @@ riscv_emit_ovl_padding_and_crc_entry (struct riscv_ovl_group_hash_entry *entry,
   return TRUE;
 }
 
+/* Build a version of the current ovl section based on what is currently loaded.  */
+static bfd_boolean
+riscv_build_current_ovl_section (struct bfd_link_info *info, void **data)
+{
+  bfd *output_bfd = info->output_bfd;
+  asection *sec = bfd_get_section_by_name (output_bfd, ".ovlgrpdata");
+  BFD_ASSERT (sec != NULL);
+  void *section_data = malloc(sec->size);
+  BFD_ASSERT (section_data != NULL);
+  *data = section_data;
+  /* Start by loading the entire contents of this section, this will cover non
+     dynamic sections.  */
+  bfd_get_section_contents (output_bfd, sec, section_data, 0, sec->size);
+
+  /* Look at all the input sections, if the output section matches this, then
+     load the contents into that section.  */
+  bfd *ibfd;
+  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+  {
+    asection *isec;
+    for (isec = ibfd->sections; isec != NULL; isec = isec->next)
+    {
+      if (isec->contents != NULL && isec->output_section == sec)
+      {
+        memcpy (section_data + isec->output_offset, isec->contents, isec->size);
+      }
+    }
+  }
+
+  return TRUE;
+}
+
+/* FIXME: Pass this along.  */
+static void *ovl_cached_data = NULL;
+
 /* The same function as RISCV_EMIT_OVL_PADDING_AND_CRC_ENTRY, but for split
    up groups. This differs in that our output section is made of many inputs,
    and these need writing to individually.  */
@@ -828,19 +863,12 @@ riscv_emit_ovl_padding_and_crc_entry2 (struct riscv_ovl_group_hash_entry *entry,
 	  return TRUE;
 	}
 
-  /* Cache a copy of the current .ovlgrpdata section, such that we can iterate
-     over all its contents without having to look at each subsection. */
-  asection *sec = bfd_get_section_by_name (output_bfd, ".ovlgrpdata");
-  BFD_ASSERT(sec != NULL);
-  void *cached_section = malloc (sec->size);
-  bfd_boolean res = bfd_get_section_contents (output_bfd, sec, cached_section,
-                                              0, sec->size);
-  BFD_ASSERT (res);
+  BFD_ASSERT(ovl_cached_data != NULL);
 
   /* Calculate CRC.  */
   /* TODO: [TC12], but use libiberty's xcrc32 as the default.  */
   unsigned int crc = 0xffffffff;
-  crc = xcrc32(cached_section + entry->ovlgrpdata_offset,
+  crc = xcrc32(ovl_cached_data + entry->ovlgrpdata_offset,
 		           entry->padded_group_size - OVL_CRC_SZ, crc);
   fprintf(stderr, "%x", crc);
 
@@ -854,7 +882,6 @@ riscv_emit_ovl_padding_and_crc_entry2 (struct riscv_ovl_group_hash_entry *entry,
   BFD_ASSERT(padding_sec->contents != NULL);
   bfd_put_32 (output_bfd, crc, padding_sec->contents + padding_sec->size - OVL_CRC_SZ);
 
-  free (cached_section);
   fprintf (stderr, "\n");
   return TRUE;
 }
@@ -867,8 +894,11 @@ riscv_emit_ovl_padding_and_crc (struct bfd_hash_table *table,
   fprintf(stderr, "Calculating CRCs\n================\n");
   riscv_ovl_group_hash_traverse (table, riscv_emit_ovl_padding_and_crc_entry,
 				 pair);
+  riscv_build_current_ovl_section (pair->info, &ovl_cached_data);
+  BFD_ASSERT(ovl_cached_data != NULL);
   riscv_ovl_group_hash_traverse (table, riscv_emit_ovl_padding_and_crc_entry2,
                                  pair);
+  free(ovl_cached_data);
 }
 
 /* Create an entry in an RISC-V ELF linker hash table.  */

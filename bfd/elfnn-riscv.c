@@ -92,10 +92,6 @@ struct riscv_elf_link_hash_entry
   /* Track whether this symbol is referred to by a non-overlay relocation.  */
   int non_overlay_reference;
 
-  /* Track whether this symbol has been automatically assigned its overlay
-     group.  */
-  int overlay_group_auto_assigned;
-
   /* Track whether this symbol has already been handled and any
      overlay groups have already been generated.  */
   int overlay_groups_resolved;
@@ -590,7 +586,7 @@ riscv_ovl_update_group (struct bfd_hash_table *table,
 				sizeof (struct riscv_ovl_functions));
   this_node->name = objalloc_alloc ((struct objalloc *) table->memory,
 				    strlen(func) + 1);
-  strncpy(this_node->name, func, strlen(func));
+  strcpy(this_node->name, func);
   this_node->next = NULL;
 
   if (entry->functions == NULL)
@@ -932,7 +928,6 @@ link_hash_newfunc (struct bfd_hash_entry *entry,
       eh->needs_ovlmultigroup_entry = FALSE;
       eh->needs_overlay_group = FALSE;
       eh->non_overlay_reference = FALSE;
-      eh->overlay_group_auto_assigned = FALSE;
       eh->overlay_groups_resolved = FALSE;
     }
 
@@ -2203,81 +2198,91 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
       htab->ovl_tables_populated = TRUE;
     }
 
-  /* No grouping file was provided, and we weren't able to call out to
-     the grouping tool to do the grouping for us, so fallback to
-     putting each symbol into a group of its own.  */
-  if (!htab->ovl_tables_populated)
+  /* If there are any symbols which weren't grouped by the grouping file
+     or grouping tool, then those symbols need to be put into a group on
+     their own.  */
+  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
     {
-      for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
-	{
-	  unsigned int i, symcount;
-	  Elf_Internal_Shdr *symtab_hdr;
-	  struct elf_link_hash_entry **sym_hashes = elf_sym_hashes (ibfd);
+      unsigned int i, symcount;
+      Elf_Internal_Shdr *symtab_hdr;
+      struct elf_link_hash_entry **sym_hashes = elf_sym_hashes (ibfd);
 
-	  if (! is_riscv_elf (ibfd))
+      if (! is_riscv_elf (ibfd))
+	continue;
+
+      symtab_hdr = &elf_symtab_hdr (ibfd);
+      symcount = ((symtab_hdr->sh_size / sizeof (ElfNN_External_Sym))
+                 - symtab_hdr->sh_info);
+
+      unsigned next_empty_group = 0;
+      for (i = 0; i < symcount; i++)
+	{
+	  struct riscv_elf_link_hash_entry *eh =
+	      (struct riscv_elf_link_hash_entry *)sym_hashes[i];
+	  asection *sec = eh->elf.root.u.def.section;
+
+	  if (!eh->needs_overlay_group)
 	    continue;
 
-	  symtab_hdr = &elf_symtab_hdr (ibfd);
-	  symcount = ((symtab_hdr->sh_size / sizeof (ElfNN_External_Sym))
-	              - symtab_hdr->sh_info);
+	  /* Skip this symbols if it's not a definition. This avoids
+	     accidentally assigning the same symbol more than once. */
+	  if (eh->elf.root.type != bfd_link_hash_defined
+	      && eh->elf.root.type != bfd_link_hash_defweak)
+	    continue;
 
-	  unsigned next_group = 0;
-	  for (i = 0; i < symcount; i++)
+	  /* A symbol which needs an overlay group will be in a section with
+	     a name of the format .ovlinput.<symbol name>.  */
+	  if (strncmp (sec->name, ".ovlinput.",
+	               strlen(".ovlinput.")) != 0)
+	    continue;  /* FIXME: This should be an error.  */
+	  const char *sym_name = sec->name + strlen(".ovlinput.");
+
+	  /* Skip the symbol if it's already been assigned a group - either
+	     because it was assigned by the grouping file or grouping tool,
+	     or because it has just been auto assigned.  */
+	  struct riscv_ovl_func_hash_entry *sym_groups =
+	      riscv_ovl_func_hash_lookup (&htab->ovl_func_table,
+	                                  sym_name, FALSE, FALSE);
+	  if (sym_groups != NULL)
+	    continue;
+
+	  /* Find the next group which is empty, starting from the
+	     current value in `next_empty_group'.  */
+	  char next_empty_group_str[24];
+	  for ( ; ; next_empty_group++)
 	    {
-	      struct riscv_elf_link_hash_entry *eh =
-	          (struct riscv_elf_link_hash_entry *)sym_hashes[i];
-	      asection *sec = eh->elf.root.u.def.section;
-
-	      if (!eh->needs_overlay_group)
-		continue;
-
-	      /* Skip this symbols if it's not a definition. This avoids
-	         accidentally assigning the same symbol more than once. */
-	      if (eh->elf.root.type != bfd_link_hash_defined
-	          && eh->elf.root.type != bfd_link_hash_defweak)
-		continue;
-
-	      /* Also skip the symbol if it's already had its overlay
-	         group assigned.  */
-	      if (eh->overlay_group_auto_assigned == TRUE)
-		continue;
-	      else
-		eh->overlay_group_auto_assigned = TRUE;
-
-	      /* A symbol which needs an overlay group will be in a section with
-	         a name of the format .ovlinput.<symbol name>.  */
-	      if (strncmp (sec->name, ".ovlinput.",
-	                   strlen(".ovlinput.")) != 0)
-		continue;
-	      const char *sym_name = sec->name + strlen(".ovlinput.");
-
-	      /* Put the symbol in the next available group.  */
-	      char next_group_str[24];
-	      sprintf (next_group_str, "%u", next_group);
-
-	      if (!riscv_ovl_update_func (&htab->ovl_func_table, sym_name,
-	                                  next_group))
-		{
-		  _bfd_error_handler (_("Failed to add %s to ovl_func_table"),
-		                      sym_name);
-		  bfd_set_error (bfd_error_bad_value);
-		  return FALSE;
-		}
-
-	      if (!riscv_ovl_update_group (&htab->ovl_group_table,
-	                                   next_group_str, sym_name))
-		{
-		  _bfd_error_handler (_("Failed to add %s to ovl_group_table"),         
-		                      next_group_str);
-		  bfd_set_error (bfd_error_bad_value);
-		  return FALSE;
-		}
-
-	      /* The next symbol will be placed in the next group.  */
-	      next_group += 1;
+	      sprintf (next_empty_group_str, "%u", next_empty_group);
+	      struct riscv_ovl_group_hash_entry *group_entry =
+	          riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
+	                                       next_empty_group_str, FALSE,
+	                                       FALSE);
+	      if (group_entry == NULL)
+		break;
 	    }
-	  htab->ovl_tables_populated = TRUE;
+
+	  if (!riscv_ovl_update_func (&htab->ovl_func_table, sym_name,
+	                              next_empty_group))
+	    {
+	      _bfd_error_handler (_("Failed to add %s to ovl_func_table"),
+	                          sym_name);
+	      bfd_set_error (bfd_error_bad_value);
+	      return FALSE;
+	    }
+
+	  if (!riscv_ovl_update_group (&htab->ovl_group_table,
+	                               next_empty_group_str, sym_name))
+	    {
+	      _bfd_error_handler (_("Failed to add %s to ovl_group_table"),         
+	                          next_empty_group_str);
+	      bfd_set_error (bfd_error_bad_value);
+	      return FALSE;
+	    }
+
+	  /* The search for the next empty group will start from the group
+	     number after this one.  */
+	  next_empty_group += 1;
 	}
+      htab->ovl_tables_populated = TRUE;
     }
 
   BFD_ASSERT (htab->ovl_tables_populated == TRUE);

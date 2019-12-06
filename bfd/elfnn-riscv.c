@@ -59,9 +59,10 @@
 #define ELF_COMMONPAGESIZE		0x1000
 
 /* Constants for overlay system.  */
-#define OVL_CRC_SZ         4
-#define OVL_GROUPPAGESIZE  512
-#define OVL_MAXGROUPSIZE   4096
+#define OVL_CRC_SZ            4
+#define OVL_GROUPPAGESIZE     512
+#define OVL_MAXGROUPSIZE      4096
+#define OVL_FIRST_FREE_GROUP  1
 
 /* RISC-V ELF linker hash entry.  */
 
@@ -2214,7 +2215,12 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
       symcount = ((symtab_hdr->sh_size / sizeof (ElfNN_External_Sym))
                  - symtab_hdr->sh_info);
 
-      unsigned next_empty_group = 0;
+      unsigned next_empty_group;
+      if (riscv_ovl_first_group_number != 0)
+	next_empty_group = riscv_ovl_first_group_number;
+      else
+	next_empty_group = OVL_FIRST_FREE_GROUP;
+
       for (i = 0; i < symcount; i++)
 	{
 	  struct riscv_elf_link_hash_entry *eh =

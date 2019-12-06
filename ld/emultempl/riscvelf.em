@@ -127,16 +127,19 @@ EOF
 PARSE_AND_LIST_PROLOGUE='
 #define OPTION_GROUPING_FILE		301
 #define OPTION_GROUPING_TOOL_ARGS	302
+#define OPTION_FIRST_GROUP_NUMBER	303
 '
 
 PARSE_AND_LIST_LONGOPTS='
   { "grouping-file",      required_argument, NULL, OPTION_GROUPING_FILE },
   { "grouping-tool-args", required_argument, NULL, OPTION_GROUPING_TOOL_ARGS },
+  { "first-group-number", required_argument, NULL, OPTION_FIRST_GROUP_NUMBER },
 '
 
 PARSE_AND_LIST_OPTIONS='
   fprintf (file, _("--grouping-file             Grouping file name\n"));
   fprintf (file, _("--grouping-tool-args        Arguments to the grouping tool\n"));
+  fprintf (file, _("--first-group-number        First group number for autogrouping\n"));
 '
 
 PARSE_AND_LIST_ARGS_CASES='
@@ -156,6 +159,15 @@ PARSE_AND_LIST_ARGS_CASES='
       riscv_grouping_tool_args = malloc (strlen (optarg) + 1);
       strcpy(riscv_grouping_tool_args, optarg);
       riscv_grouping_tool_args[strlen (optarg)] = '\0';
+      break;
+    case OPTION_FIRST_GROUP_NUMBER:
+      {
+	const char *end;
+	riscv_ovl_first_group_number = bfd_scan_vma (optarg, &end, 0);
+	if (*end != '\0' || riscv_ovl_first_group_number <= 0)
+	  einfo (_("%P: warning: ignoring invalid --first-group-number value %s\n"),
+	         optarg);
+      }
       break;
 '
 

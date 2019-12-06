@@ -148,11 +148,10 @@ struct riscv_elf_link_hash_table
   /* Short cut to output section containing the overlay group data.  */
   asection *sovlgroupdata;
 
-  /* Short cut to overlay multigroup table section.  */
-  asection *sovlmultigroup;
-
-  /* Short cut to overlay group size table section.  */
-  asection *sovlgrouptable;
+  /* Sizes for the group table and multigroup table, which will
+     populate group 0.  */
+  bfd_vma ovl_group_table_size;
+  bfd_vma ovl_multigroup_table_size;
 
   /* Mappings from groups to functions and vice-versa.  */
   struct bfd_hash_table ovl_func_table;
@@ -960,8 +959,8 @@ riscv_elf_link_hash_table_create (bfd *abfd)
   ret->sovlplt = NULL;
   ret->next_ovlplt_offset = 0;
 
-  ret->sovlgroupdata = NULL;
-  ret->sovlmultigroup = NULL;
+  ret->ovl_group_table_size = 0;
+  ret->ovl_multigroup_table_size = 0;
 
   bfd_boolean success;
   success = riscv_create_ovl_group_table (&ret->ovl_func_table,
@@ -1005,33 +1004,6 @@ riscv_elf_create_ovlplt_section (bfd *abfd, struct bfd_link_info *info)
   return TRUE;
 }
 
-/* Create the .ovlmultigroup section.  */
-
-static bfd_boolean
-riscv_elf_create_ovl_multigroup_table (bfd *abfd, struct bfd_link_info *info)
-{
-  flagword flags;
-  asection *s;
-  const struct elf_backend_data *bed = get_elf_backend_data (abfd);
-  struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
-
-  /* This function may be called more than once.  */
-  if (htab->sovlmultigroup != NULL)
-    return TRUE;
-
-  flags = bed->dynamic_sec_flags | SEC_READONLY;
-
-  s = bfd_make_section_anyway_with_flags (abfd, ".ovlmultigroup", flags);
-  if (s == NULL
-      || !bfd_set_section_alignment (abfd, s, bed->s->log_file_align))
-    return FALSE;
-  /* The size of the multigroup section is calculated later.  */
-  s->size = 0;
-  htab->sovlmultigroup = s;
-
-  return TRUE;
-}
-
 /* Create the output overlay group section.  */
 
 static bfd_boolean
@@ -1042,10 +1014,7 @@ riscv_elf_create_ovl_group_section (bfd *abfd, struct bfd_link_info *info)
 
   /* This function may be called more than once.  */
   if (htab->sovlgroupdata != NULL)
-    {
-      BFD_ASSERT (htab->sovlgrouptable != NULL);
-      return TRUE;
-    }
+    return TRUE;
 
   flagword flags;
   asection *s;
@@ -1062,16 +1031,6 @@ riscv_elf_create_ovl_group_section (bfd *abfd, struct bfd_link_info *info)
   htab->sovlgroupdata = s;
 
   riscv_print_group_table (&htab->ovl_group_table);
-
-  /* Create section for holding the section size table, this will be sized by
-     riscv_create_ovl_group_section.  */
-  s = bfd_make_section_anyway_with_flags (abfd, ".ovlgrptbl", flags);
-  if (s == NULL
-      || !bfd_set_section_alignment (abfd, s, bed->s->log_file_align))
-    return FALSE;
-  s->size = 0;
-  htab->sovlgrouptable = s;
-
   return TRUE;
 }
 
@@ -1154,9 +1113,6 @@ riscv_elf_create_dynamic_sections (bfd *dynobj,
   BFD_ASSERT (htab != NULL);
 
   if (!riscv_elf_create_ovl_group_section (dynobj, info))
-    return FALSE;
-
-  if (!riscv_elf_create_ovl_multigroup_table (dynobj, info))
     return FALSE;
 
   if (!riscv_elf_create_got_section (dynobj, info))
@@ -1393,8 +1349,6 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	     to hold the contents of the overlay groups and the multigroup
 	     table.  */
 	  if (!riscv_elf_create_ovl_group_section (htab->elf.dynobj, info))
-	    return FALSE;
-	  if (!riscv_elf_create_ovl_multigroup_table (htab->elf.dynobj, info))
 	    return FALSE;
 
 	  /* Enable analysis of dynamic sections since the size of the
@@ -2291,6 +2245,11 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
       htab->ovl_tables_populated = TRUE;
     }
 
+  /* Make sure that group 0 is allocated, since the group table and multi
+     group tables will be put into this section.  */
+  struct riscv_ovl_group_hash_entry *group0_entry =
+      riscv_ovl_group_hash_lookup (&htab->ovl_group_table, "0", TRUE, TRUE);
+
   BFD_ASSERT (htab->ovl_tables_populated == TRUE);
   for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
     {
@@ -2381,10 +2340,6 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	     to be allocated.  */
 	  if (sym_groups->multigroup == TRUE)
 	    {
-	      /* First make sure that the multigroup table section has
-	         been created.  */
-	      BFD_ASSERT (htab->sovlmultigroup != NULL);
-
 	      /* Calculate the size of the entry in the multigroup
 	         table. A multigroup entry consists of a list of tokens
 	         (4-bytes each) followed by a 4-byte 0 terminator.  */
@@ -2399,8 +2354,8 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	      /* NULL terminator.  */
 	      multigroup_entry_size += 4;
 
-	      sym_groups->multigroup_offset = htab->sovlmultigroup->size;
-	      htab->sovlmultigroup->size += multigroup_entry_size;
+	      sym_groups->multigroup_offset = htab->ovl_multigroup_table_size;
+	      htab->ovl_multigroup_table_size += multigroup_entry_size;
 	    }
 
 	  char group_id_str[24];
@@ -2443,9 +2398,15 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 
   /* Now the size of any multigroups has been determined, so space for the
      multigroup table can be allocated.  */
-  if (htab->sovlmultigroup)
-    htab->sovlmultigroup->contents =
-	(unsigned char *)bfd_zalloc (output_bfd, htab->sovlmultigroup->size);
+  /* Set the size of .ovlgrptbl section, adding a placeholder last entry.  */
+  ovl_max_group = (ovl_max_group + 2) * 2;
+  htab->ovl_group_table_size += ovl_max_group;
+
+  /* Now that the size of the group table and multigroup table has been
+     determined, we can use the sum of these as the size of group 0, which
+     will hold these tables.  */
+  group0_entry->group_size =
+      htab->ovl_group_table_size + htab->ovl_multigroup_table_size;
 
   fprintf(stderr, "Pre-size Table\n===========\n");
   riscv_print_group_table (&htab->ovl_group_table);
@@ -2495,15 +2456,6 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
   fprintf(stderr, "Final Table\n===========\n");
   riscv_print_group_table (&htab->ovl_group_table);
   riscv_print_func_table (&htab->ovl_func_table);
-
-  /* Set the size of .ovlgrptbl section, adding a placeholder last entry.  */
-  if (htab->sovlgrouptable)
-    {
-      ovl_max_group = (ovl_max_group + 2) * 2;
-      htab->sovlgrouptable->size = ovl_max_group;
-      htab->sovlgrouptable->contents =
-        (bfd_byte *) bfd_zalloc (dynobj, ovl_max_group);
-    }
   return TRUE;
 }
 
@@ -2802,10 +2754,18 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
     }
   else
     {
-      /* Check if the entry in the multigroup table needs to be filled in.  */
-      bfd_byte *loc = htab->sovlmultigroup->contents
+      asection *group_table_sec =
+          bfd_get_section_by_name (htab->elf.dynobj,
+                                   ".ovlinput.__internal.grouptables");
+
+      /* The multigroup table is immediately after the group table. So add
+         the group table size to the offset.  */
+      bfd_byte *loc = group_table_sec->contents
+                      + htab->ovl_group_table_size
                       + func_groups->multigroup_offset;
-      if (bfd_get_32 (info->output_bfd, loc) == 0)
+
+      /* Check if the entry in the multigroup table needs to be filled in.  */
+      if (bfd_get_32 (htab->elf.dynobj, loc) == 0)
 	{
 	  /* Create the multigroup table entry, filling it with tokens
 	     for the function in each of the groups it is contained within.  */
@@ -2816,11 +2776,11 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
 	      bfd_vma token;
 	      token = ovltoken(0, 0, func_group_info->offset / 4,
 	                       func_group_info->id);
-	      bfd_put_32 (info->output_bfd, token, loc);
+	      bfd_put_32 (htab->elf.dynobj, token, loc);
 	      loc += OVLMULTIGROUP_ITEM_SIZE;
 	    }
 	  /* The list of tokens is NULL terminated.  */
-	  bfd_put_32 (info->output_bfd, 0, loc);
+	  bfd_put_32 (htab->elf.dynobj, 0, loc);
 	}
 
       /* Create the token referring to the multigroup.  */
@@ -4137,27 +4097,29 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
     }
 
   /* Fill in all the .ovlgrptbl table entries. */
-  if (htab->sovlgrouptable)
-    {
-      unsigned group = 0;
-      bfd_vma offset = 0;
-      char group_id_str[24];
+  {
+    asection *group_table_sec =
+        bfd_get_section_by_name (htab->elf.dynobj, ".ovlinput.__internal.grouptables");
 
-      for (group = 0; group < (htab->sovlgrouptable->size / 2); group++)
-	{
-	  /* Store current offset.  */
-	  uint16_t offset_stored = offset / 512;
-	  bfd_put_16 (output_bfd, offset_stored,
-		      htab->sovlgrouptable->contents + (group * 2));
+    bfd_vma offset = 0;
+    unsigned group = 0;
+    char group_id_str[24];
 
-	  sprintf (group_id_str, "%u", group);
-	  struct riscv_ovl_group_hash_entry *group_entry =
-	    riscv_ovl_group_hash_lookup (&htab->ovl_group_table, group_id_str,
-					 FALSE, FALSE);
-	  if (group_entry)
-	    offset += group_entry->padded_group_size;
-	}
-    }
+    for (group = 0; group < (htab->ovl_group_table_size / 2); group++)
+      {
+	/* Store current offset.  */
+	uint16_t offset_stored = offset / 512;
+	bfd_put_16 (htab->elf.dynobj, offset_stored,
+	            group_table_sec->contents + group * 2);
+
+	sprintf (group_id_str, "%u", group);
+  	struct riscv_ovl_group_hash_entry *group_entry =
+	riscv_ovl_group_hash_lookup (&htab->ovl_group_table, group_id_str,
+	                             FALSE, FALSE);
+	if (group_entry)
+	  offset += group_entry->padded_group_size;
+      }
+  }
 
   /* Iterate through the input symbols and if they are allocated to an
      overlay group then copy the contents from .ovlallfns to the contents
@@ -6030,6 +5992,22 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 
   riscv_elf_overlay_preprocess (info->output_bfd, info);
 
+  /* For group 0, create a special input section that will hold the
+     group table and multigroup table.  */
+  {
+    flagword flags;
+    asection *s;
+    bfd_vma size = htab->ovl_group_table_size + htab->ovl_multigroup_table_size;
+
+    flags = bed->dynamic_sec_flags | SEC_READONLY | SEC_CODE;
+    s = bfd_make_section_anyway_with_flags (htab->elf.dynobj,
+                                            ".ovlinput.__internal.grouptables",
+                                            flags);
+    BFD_ASSERT(s != NULL);
+    s->contents = (unsigned char *)bfd_zalloc (htab->elf.dynobj, size);
+    s->size = size;
+  }
+
   /* For each group, create an padding section that will hold the group number
      and SHA.  */
   for (unsigned i = 0; i < ovl_max_group; i++)
@@ -6152,6 +6130,16 @@ riscv_elf_overlay_sort_value (asection *s, struct bfd_link_info *info)
   /* If this is not an overlay function, return 1.  */
   if (strncmp(s->name, ".ovlinput.", strlen(".ovlinput.")) != 0)
     return 1;
+
+  /* If this is the group table, it will always be the first thing
+     to appear in the output section.  */
+  if (strncmp(s->name, ".ovlinput.__internal.grouptables",
+              strlen(".ovlinput.__internal.grouptables")) == 0)
+    {
+      /* The group tables are always the first things to appear in the
+         output section.  */
+      return 0;
+    }
 
   /* If this is an internal padding value, look at the group number, and use
      its offset to return an offset.  */

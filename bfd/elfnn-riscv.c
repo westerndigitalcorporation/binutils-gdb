@@ -336,6 +336,9 @@ struct riscv_ovl_group_hash_entry
   bfd_vma group_size;
   bfd_vma padded_group_size;
   bfd_vma ovlgrpdata_offset;
+
+  /* The first function which was allocated to this group.  */
+  const char *first_func;
 };
 
 /* Linked list of overlay group ids.  */
@@ -459,6 +462,7 @@ riscv_ovl_group_hash_newfunc (struct bfd_hash_entry *entry,
   ret->group_size = 0;
   ret->padded_group_size = 0;
   ret->ovlgrpdata_offset = 0;
+  ret->first_func = NULL;
 
   return (struct bfd_hash_entry *) ret;
 }
@@ -2376,6 +2380,12 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	         group. This corresponds to the current size of the output
 	         section.  */
 	      func_group_info->offset = group_entry->group_size;
+
+        /* Keep track of the first function which was allocated to this
+           group.  */
+        if (group_entry->group_size == 0)
+          group_entry->first_func = sym_name;
+
 	      /* Allocate space in the output group for the contents of the
 	         input section corresponding to the symbol, and re-pad to a
 		 4-byte boundary to allow offsets to remain valid.  */
@@ -2749,7 +2759,53 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
 
   if (func_groups->multigroup == FALSE)
     {
-      return ovltoken(0, from_plt, func_groups->groups->offset / 4,
+      char group_id_str[24];
+      sprintf (group_id_str, "%lu", func_groups->groups->id);
+
+      struct riscv_ovl_group_hash_entry *group_entry =
+          riscv_ovl_group_hash_lookup(&htab->ovl_group_table,
+                                      group_id_str, FALSE, FALSE);
+
+      char group_first_input_sec_name[100];
+      sprintf (group_first_input_sec_name,
+               ".ovlinput.%s", group_entry->first_func);
+
+      char target_sym_input_sec_name[100];
+      sprintf (target_sym_input_sec_name,
+               ".ovlinput.%s", entry->root.root.string);
+
+      fprintf (stderr, "group_first_input_sec_name: %s\n", group_first_input_sec_name);
+      fprintf (stderr, "target_sym_input_sec_name:  %s\n", target_sym_input_sec_name);
+
+      bfd *ibfd;
+      asection *group_first_input_sec = NULL;
+      asection *target_sym_input_sec = NULL;
+      for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+        {
+          if (group_first_input_sec == NULL)
+            group_first_input_sec =
+                bfd_get_section_by_name (ibfd, group_first_input_sec_name);
+          if (target_sym_input_sec == NULL)
+            target_sym_input_sec =
+                bfd_get_section_by_name (ibfd, target_sym_input_sec_name);
+          if (group_first_input_sec && target_sym_input_sec)
+            break;
+        }
+      BFD_ASSERT (ibfd != NULL);
+      BFD_ASSERT (group_first_input_sec != NULL);
+      BFD_ASSERT (target_sym_input_sec != NULL);
+
+      bfd_vma offset_into_group = target_sym_input_sec->output_offset
+                                  - group_first_input_sec->output_offset;
+
+      fprintf (stderr, "group_first_input_sec->output_offset: %lu\n", group_first_input_sec->output_offset);
+      fprintf (stderr, "target_sym_input_sec->output_offset:  %lu\n", target_sym_input_sec->output_offset);
+
+      BFD_ASSERT ((offset_into_group % 4) == 0);
+
+      fprintf (stderr, "OFFSET INTO GROUP: %lu\n", offset_into_group);
+
+      return ovltoken(0, from_plt, offset_into_group / 4,
                       func_groups->groups->id);
     }
   else
@@ -6020,6 +6076,21 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 				     group_id_str, FALSE, FALSE);
       if (group_entry)
 	{
+	  /* Get the first input section allocated to this group and set
+	     its alignment to 512 bytes.  */
+	  if (group_entry->functions)
+	    {
+	      char input_sec_name[100];
+	      sprintf (input_sec_name, ".ovlinput.%s", group_entry->first_func);
+
+	      bfd *ibfd;
+	      asection *isec = NULL;
+	      for (ibfd = info->input_bfds; isec == NULL; ibfd = ibfd->link.next)
+		isec = bfd_get_section_by_name (ibfd, input_sec_name);
+
+	      bfd_set_section_alignment (ibfd, isec, 9); /* 512 alignment.  */
+	    }
+
 	  flagword flags;
 	  asection *s;
 	  bfd_vma padding = group_entry->padded_group_size -

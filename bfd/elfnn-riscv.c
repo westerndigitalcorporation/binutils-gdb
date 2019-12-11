@@ -6215,6 +6215,12 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 	      sprintf (duplicate_func_name,
 		       ".ovlinput.__internal.duplicate.%lu.%s",
 		       func_group_info->id, sym_name);
+
+              /* Don't create the same duplicate section more than once.  */
+              if (bfd_get_section_by_name (htab->elf.dynobj,
+                                           duplicate_func_name))
+                continue;
+
 	      fprintf (stderr,
 		       "- Creating duplicate section `%s` with size 0x%lx\n",
 		       duplicate_func_name, sec->size);

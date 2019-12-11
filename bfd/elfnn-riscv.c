@@ -339,6 +339,7 @@ struct riscv_ovl_group_hash_entry
 
   /* The first function which was allocated to this group.  */
   const char *first_func;
+  const char *last_func;
 };
 
 /* Linked list of overlay group ids.  */
@@ -463,6 +464,7 @@ riscv_ovl_group_hash_newfunc (struct bfd_hash_entry *entry,
   ret->padded_group_size = 0;
   ret->ovlgrpdata_offset = 0;
   ret->first_func = NULL;
+  ret->last_func = NULL;
 
   return (struct bfd_hash_entry *) ret;
 }
@@ -866,21 +868,26 @@ riscv_emit_ovl_padding_and_crc_entry2 (struct riscv_ovl_group_hash_entry *entry,
 
   BFD_ASSERT(ovl_cached_data != NULL);
 
-  /* Calculate CRC.  */
-  /* TODO: [TC12], but use libiberty's xcrc32 as the default.  */
-  unsigned int crc = 0xffffffff;
-  crc = xcrc32(ovl_cached_data + entry->ovlgrpdata_offset,
-		           entry->padded_group_size - OVL_CRC_SZ, crc);
-  fprintf(stderr, "%x", crc);
-
-  /* Load the padding section and place the value in the last 32-bits.  */
+  /* Load the padding section.  */
   char group_sec_name[100];
   sprintf (group_sec_name, ".ovlinput.__internal.padding.%u", entry->group);
   struct bfd_link_info *info = pair->info;
   struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
   asection *padding_sec = bfd_get_section_by_name (htab->elf.dynobj, group_sec_name);
   BFD_ASSERT(padding_sec != NULL);
-  BFD_ASSERT(padding_sec->contents != NULL);
+
+  /* Calculate CRC.  */
+  /* TODO: [TC12], but use libiberty's xcrc32 as the default.  */
+  unsigned int crc = 0xffffffff;
+  crc = xcrc32(ovl_cached_data + entry->ovlgrpdata_offset,
+               padding_sec->size - OVL_CRC_SZ, crc);
+  fprintf(stderr, "%x", crc);
+
+  /* Emit the padding into the padding section.  */
+  for (bfd_vma offs = 0; offs < padding_sec->size; offs += 2)
+    bfd_put_16 (htab->elf.dynobj, entry->group, padding_sec->contents + offs);
+
+  /* Put the 32-bit CRC at the end after the padding.  */
   bfd_put_32 (output_bfd, crc, padding_sec->contents + padding_sec->size - OVL_CRC_SZ);
 
   fprintf (stderr, "\n");
@@ -2385,6 +2392,7 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
            group.  */
         if (group_entry->group_size == 0)
           group_entry->first_func = sym_name;
+        group_entry->last_func = sym_name;
 
 	      /* Allocate space in the output group for the contents of the
 	         input section corresponding to the symbol, and re-pad to a
@@ -4929,6 +4937,35 @@ riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count,
 
   /* Actually delete the bytes.  */
   sec->size -= count;
+
+  /* If this is in any overlay groups, get the accompanying padding sections
+     for those groups and increase their sizes accordingly.  */
+  if (strncmp (sec->name, ".ovlinput.", strlen(".ovlinput.")) == 0)
+    {
+      struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (link_info);
+
+      const char *sym_name = sec->name + strlen(".ovlinput.");
+      struct riscv_ovl_func_hash_entry *func_entry =
+        riscv_ovl_func_hash_lookup (&htab->ovl_func_table, sym_name, FALSE,
+                                    FALSE);
+      if (func_entry)
+        {
+          char group_padding_section_name[100];
+          struct riscv_ovl_func_group_info *groups;
+          for (groups = func_entry->groups; groups != NULL;
+               groups = groups->next)
+            {
+              sprintf (group_padding_section_name,
+                       ".ovlinput.__internal.padding.%lu",
+                       groups->id);
+              asection *group_padding_section =
+                  bfd_get_section_by_name (htab->elf.dynobj,
+                                           group_padding_section_name);
+              group_padding_section->size += count;
+            }
+        }
+    }
+
   memmove (contents + addr, contents + addr + count, toaddr - addr - count);
 
   /* Adjust the location of all of the relocs.  Note that we need not
@@ -6101,20 +6138,16 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 	  BFD_ASSERT(padding > 0);
 	  char group_sec_name[100];
 	  sprintf (group_sec_name, ".ovlinput.__internal.padding.%u", i);
-	  fprintf (stderr, "- Creating padding section `%s` with size 0x%lx\n",
-		   group_sec_name, padding);
+	  fprintf (stderr, "- Creating padding section `%s` with no size or contents\n",
+		   group_sec_name);
 	  flags = bed->dynamic_sec_flags | SEC_READONLY | SEC_CODE;
 	  s = bfd_make_section_anyway_with_flags (htab->elf.dynobj,
 						  strdup(group_sec_name),
 						  flags);
+          s->size = padding;
+          s->contents = bfd_zalloc (htab->elf.dynobj, 512);
 	  BFD_ASSERT(s != NULL);
-	  bfd_set_section_alignment (htab->elf.dynobj, s,
-				     bed->s->log_file_align);
-	  s->contents = (unsigned char *)bfd_zalloc (htab->elf.dynobj, padding);
-	  s->size = padding;
-    /* Fill the padding section with the group number now.  */
-    for (bfd_vma offs = 0; offs < padding; offs += 2)
-      bfd_put_16 (htab->elf.dynobj, i, s->contents + offs);
+	  bfd_set_section_alignment (htab->elf.dynobj, s, 0);
 	}
     }
 

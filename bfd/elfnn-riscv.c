@@ -4938,8 +4938,8 @@ riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count,
   /* Actually delete the bytes.  */
   sec->size -= count;
 
-  /* If this is in any overlay groups, get the accompanying padding sections
-     for those groups and increase their sizes accordingly.  */
+  /* If this is in any overlay groups then the corresponding padding sections
+     for those groups need to be resized, as do any duplicates.  */
   if (strncmp (sec->name, ".ovlinput.", strlen(".ovlinput.")) == 0)
     {
       struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (link_info);
@@ -4950,6 +4950,7 @@ riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count,
                                     FALSE);
       if (func_entry)
         {
+          /* Get the accompanying padding sections and increase their size.  */
           char group_padding_section_name[100];
           struct riscv_ovl_func_group_info *groups;
           for (groups = func_entry->groups; groups != NULL;
@@ -4962,6 +4963,21 @@ riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count,
                   bfd_get_section_by_name (htab->elf.dynobj,
                                            group_padding_section_name);
               group_padding_section->size += count;
+            }
+
+          /* Get any duplicated sections and reduce their size.  */
+          char sym_duplicate_section_name[100];
+          for (groups = func_entry->groups; groups != NULL;
+               groups = groups->next)
+            {
+              sprintf (sym_duplicate_section_name,
+                       ".ovlinput.__internal.duplicate.%lu.%s",
+                       groups->id, sym_name);
+              asection *sym_duplicate_section =
+                  bfd_get_section_by_name (htab->elf.dynobj,
+                                           sym_duplicate_section_name);
+              if (sym_duplicate_section)
+                sym_duplicate_section->size -= count;
             }
         }
     }

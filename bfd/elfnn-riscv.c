@@ -2423,9 +2423,9 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 
   /* Now the size of any multigroups has been determined, so space for the
      multigroup table can be allocated.  */
-  /* Set the size of .ovlgrptbl section, adding a placeholder last entry.  */
-  ovl_max_group = (ovl_max_group + 2) * 2;
-  htab->ovl_group_table_size += ovl_max_group;
+  /* Set the size of .ovlgrptbl section, adding a placeholder last entry and
+     space for a null terminator.  */
+  htab->ovl_group_table_size = (ovl_max_group + 3) * 2;
 
   /* Now that the size of the group table and multigroup table has been
      determined, we can use the sum of these as the size of group 0, which
@@ -4279,7 +4279,8 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
     unsigned group = 0;
     char group_id_str[24];
 
-    for (group = 0; group < (htab->ovl_group_table_size / 2); group++)
+    unsigned max_group = (htab->ovl_group_table_size / 2) - 3;
+    for (group = 0; group <= (max_group + 1); group++)
       {
 	/* Store current offset.  */
 	uint16_t offset_stored = offset / 512;
@@ -4293,6 +4294,9 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 	if (group_entry)
 	  offset += group_entry->padded_group_size;
       }
+    /* The last entry in the .ovlgrptbl is a null terminator.  */
+    bfd_put_16 (htab->elf.dynobj, 0,
+               group_table_sec->contents + ((max_group + 2) * 2));
   }
 
   /* Iterate through the input symbols and if they are allocated to an
@@ -5060,9 +5064,9 @@ riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count,
                                     FALSE);
       if (func_entry)
         {
+          struct riscv_ovl_func_group_info *groups;
           /* Get the accompanying padding sections and increase their size.  */
           char group_padding_section_name[100];
-          struct riscv_ovl_func_group_info *groups;
           for (groups = func_entry->groups; groups != NULL;
                groups = groups->next)
             {
@@ -6229,7 +6233,7 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 
   /* For each group, create an padding section that will hold the group number
      and SHA.  */
-  for (unsigned i = 0; i < ovl_max_group; i++)
+  for (unsigned i = 0; i <= ovl_max_group; i++)
     {
       char group_id_str[24];
       sprintf (group_id_str, "%u", i);

@@ -630,6 +630,13 @@ riscv_parse_grouping_line (char * line, struct bfd_hash_table *ovl_func_table,
 	  return FALSE;
 	}
 
+      if (group == 0)
+        {
+          _bfd_error_handler (
+               _("Invalid group id \"0\" in overlay grouping file"));
+          bfd_set_error (bfd_error_bad_value);
+        }
+
       if (!riscv_ovl_update_func (ovl_func_table, func, group))
 	{
 	  _bfd_error_handler (_("Failed to add %s to ovl_func_table"), func);

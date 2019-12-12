@@ -2781,37 +2781,58 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
           riscv_ovl_group_hash_lookup(&htab->ovl_group_table,
                                       group_id_str, FALSE, FALSE);
 
+      bfd *ibfd;
+
+      /* First find the input section for the first function in this
+         group.  */
       char group_first_input_sec_name[100];
       sprintf (group_first_input_sec_name,
-               ".ovlinput.%s", group_entry->first_func);
+               ".ovlinput.__internal.duplicate.%lu.%s",
+               func_groups->groups->id, group_entry->first_func);
 
+      asection *group_first_input_sec = NULL;
+      for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+        {
+          group_first_input_sec =
+              bfd_get_section_by_name (ibfd, group_first_input_sec_name);
+          if (group_first_input_sec)
+            break;
+        }
+      if (!group_first_input_sec)
+        {
+          sprintf (group_first_input_sec_name,
+                   ".ovlinput.%s", group_entry->first_func);
+          for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+            {
+              group_first_input_sec =
+                  bfd_get_section_by_name (ibfd, group_first_input_sec_name);
+              if (group_first_input_sec)
+                break;
+            }
+        }
+
+      /* Now find the input section for the target function in this
+         group.  */
       char target_sym_input_sec_name[100];
       sprintf (target_sym_input_sec_name,
                ".ovlinput.%s", entry->root.root.string);
 
-      fprintf (stderr, "group_first_input_sec_name: %s\n", group_first_input_sec_name);
-      fprintf (stderr, "target_sym_input_sec_name:  %s\n", target_sym_input_sec_name);
-
-      bfd *ibfd;
-      asection *group_first_input_sec = NULL;
       asection *target_sym_input_sec = NULL;
       for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
         {
-          if (group_first_input_sec == NULL)
-            group_first_input_sec =
-                bfd_get_section_by_name (ibfd, group_first_input_sec_name);
-          if (target_sym_input_sec == NULL)
-            target_sym_input_sec =
-                bfd_get_section_by_name (ibfd, target_sym_input_sec_name);
-          if (group_first_input_sec && target_sym_input_sec)
+          target_sym_input_sec =
+              bfd_get_section_by_name (ibfd, target_sym_input_sec_name);
+          if (target_sym_input_sec)
             break;
         }
-      BFD_ASSERT (ibfd != NULL);
       BFD_ASSERT (group_first_input_sec != NULL);
       BFD_ASSERT (target_sym_input_sec != NULL);
 
       bfd_vma offset_into_group = target_sym_input_sec->output_offset
                                   - group_first_input_sec->output_offset;
+
+      fprintf (stderr, "group_first_input_sec_name: %s\n", group_first_input_sec_name);
+      fprintf (stderr, "target_sym_input_sec_name:  %s\n", target_sym_input_sec_name);
 
       fprintf (stderr, "group_first_input_sec->output_offset: %lu\n", group_first_input_sec->output_offset);
       fprintf (stderr, "target_sym_input_sec->output_offset:  %lu\n", target_sym_input_sec->output_offset);
@@ -2845,8 +2866,90 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
 	       func_group_info = func_group_info->next)
 	    {
 	      bfd_vma token;
+
+	      char group_id_str[24];
+	      sprintf (group_id_str, "%lu", func_group_info->id);
+
+	      struct riscv_ovl_group_hash_entry *group_entry =
+		  riscv_ovl_group_hash_lookup(&htab->ovl_group_table,
+					      group_id_str, FALSE, FALSE);
+
+	      bfd *ibfd;
+
+              /* First find the input section for the first function in this
+                 group.  */
+	      char group_first_input_sec_name[100];
+	      sprintf (group_first_input_sec_name,
+                       ".ovlinput.__internal.duplicate.%lu.%s",
+                       func_group_info->id, group_entry->first_func);
+
+	      asection *group_first_input_sec = NULL;
+              for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+                {
+                  group_first_input_sec =
+                      bfd_get_section_by_name (ibfd, group_first_input_sec_name);
+                  if (group_first_input_sec)
+                    break;
+                }
+              if (!group_first_input_sec)
+                {
+                  sprintf (group_first_input_sec_name,
+                           ".ovlinput.%s", group_entry->first_func);
+                  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+                    {
+                      group_first_input_sec =
+                          bfd_get_section_by_name (ibfd, group_first_input_sec_name);
+                      if (group_first_input_sec)
+                        break;
+                    }
+                }
+
+              /* Now find the input section for the target function in this
+                 group.  */
+	      char target_sym_input_sec_name[100];
+	      sprintf (target_sym_input_sec_name,
+		       ".ovlinput.__internal.duplicate.%lu.%s",
+                       func_group_info->id, entry->root.root.string);
+
+	      asection *target_sym_input_sec = NULL;
+	      for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+		{
+		  target_sym_input_sec =
+		      bfd_get_section_by_name (ibfd, target_sym_input_sec_name);
+                  if (target_sym_input_sec)
+                    break;
+		}
+              if (!target_sym_input_sec)
+                {
+                  sprintf (target_sym_input_sec_name,
+                           ".ovlinput.%s", entry->root.root.string);
+                  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+                    {
+                      target_sym_input_sec =
+                          bfd_get_section_by_name (ibfd, target_sym_input_sec_name);
+                      if (target_sym_input_sec)
+                        break;
+                    }
+                }
+              BFD_ASSERT (group_first_input_sec != NULL);
+              BFD_ASSERT (target_sym_input_sec != NULL);
+
+	      bfd_vma offset_into_group = target_sym_input_sec->output_offset
+					  - group_first_input_sec->output_offset;
+
+              fprintf (stderr, "group_first_input_sec_name: %s\n", group_first_input_sec_name);
+              fprintf (stderr, "target_sym_input_sec_name:  %s\n", target_sym_input_sec_name);
+
+	      fprintf (stderr, "group_first_input_sec->output_offset: %lu\n", group_first_input_sec->output_offset);
+	      fprintf (stderr, "target_sym_input_sec->output_offset:  %lu\n", target_sym_input_sec->output_offset);
+
+	      BFD_ASSERT ((offset_into_group % 4) == 0);
+
+	      fprintf (stderr, "OFFSET INTO GROUP: %lu\n", offset_into_group);
+
 	      token = ovltoken(0, 0, func_group_info->offset / 4,
 	                       func_group_info->id);
+
 	      bfd_put_32 (htab->elf.dynobj, token, loc);
 	      loc += OVLMULTIGROUP_ITEM_SIZE;
 	    }

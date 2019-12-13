@@ -5262,6 +5262,17 @@ size_input_section
       /* Remember where in the output section this input section goes.  */
       i->output_offset = dot - o->vma;
 
+      /* FIXME: Is there a better place for this code? */
+      /* If the section is a target-specific aignment section, size it
+         accordingly.  */
+      if (strncmp (i->name, ".ovlinput.__internal.padding.",
+                   strlen(".ovlinput.__internal.padding.")) == 0)
+	{
+	  i->size = align_power (dot, 9) - dot;
+	  if (i->size < 4 /* CRC_SZ*/)
+	    i->size += 512;
+	}
+
       /* Mark how big the output section must be to contain this now.  */
       dot += TO_ADDR (i->size);
       if (!(o->flags & SEC_FIXED_SIZE))

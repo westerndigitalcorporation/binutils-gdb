@@ -6231,57 +6231,7 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
     s->size = size;
   }
 
-  /* For each group, create an padding section that will hold the group number
-     and SHA.  */
-  for (unsigned i = 0; i <= ovl_max_group; i++)
-    {
-      char group_id_str[24];
-      sprintf (group_id_str, "%u", i);
-
-      struct riscv_ovl_group_hash_entry *group_entry =
-	riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
-				     group_id_str, FALSE, FALSE);
-      if (group_entry)
-	{
-	  /* Get the first input section allocated to this group and set
-	     its alignment to 512 bytes.  */
-	  if (group_entry->functions)
-	    {
-	      char input_sec_name[100];
-	      sprintf (input_sec_name, ".ovlinput.%s", group_entry->first_func);
-
-	      bfd *ibfd;
-	      asection *isec = NULL;
-	      for (ibfd = info->input_bfds; isec == NULL; ibfd = ibfd->link.next)
-		isec = bfd_get_section_by_name (ibfd, input_sec_name);
-
-	      bfd_set_section_alignment (ibfd, isec, 9); /* 512 alignment.  */
-	    }
-
-	  flagword flags;
-	  asection *s;
-	  bfd_vma padding = group_entry->padded_group_size -
-	    group_entry->group_size;
-
-	  /* It should be the case that there is always padding for the group
-	     SHA?  */
-	  BFD_ASSERT(padding > 0);
-	  char group_sec_name[100];
-	  sprintf (group_sec_name, ".ovlinput.__internal.padding.%u", i);
-	  fprintf (stderr, "- Creating padding section `%s` with no size or contents\n",
-		   group_sec_name);
-	  flags = bed->dynamic_sec_flags | SEC_READONLY | SEC_CODE;
-	  s = bfd_make_section_anyway_with_flags (htab->elf.dynobj,
-						  strdup(group_sec_name),
-						  flags);
-          s->size = padding;
-          s->contents = bfd_zalloc (htab->elf.dynobj, 512);
-	  BFD_ASSERT(s != NULL);
-	  bfd_set_section_alignment (htab->elf.dynobj, s, 0);
-	}
-    }
-
-  /* Create duplicate sections.  */
+  /* Create duplicate sections for functions in multigroups.  */
   bfd *ibfd;
   for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
     {
@@ -6352,6 +6302,65 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 					       func_group_info->id,
 					       s, /* FIXME: Size (relax) */ 0);
 	    }
+	}
+    }
+
+  /* For each group, create an padding section that will hold the group number
+     and SHA.  */
+  for (unsigned i = 0; i <= ovl_max_group; i++)
+    {
+      char group_id_str[24];
+      sprintf (group_id_str, "%u", i);
+
+      struct riscv_ovl_group_hash_entry *group_entry =
+	riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
+				     group_id_str, FALSE, FALSE);
+      if (group_entry)
+	{
+	  /* Get the first input section allocated to this group and set
+	     its alignment to 512 bytes.  */
+	  if (group_entry->functions)
+	    {
+	      char input_sec_name[100];
+	      char duplicate_sec_name[100];
+	      sprintf (input_sec_name, ".ovlinput.%s", group_entry->first_func);
+	      sprintf (duplicate_sec_name, ".ovlinput.__internal.duplicate.%u.%s",
+		       i, group_entry->first_func);
+
+	      /* First look for a duplicate, if one is not found, then it is the
+		 original verison.  */
+	      asection *isec = bfd_get_section_by_name (htab->elf.dynobj,
+							duplicate_sec_name);
+	      if (isec == NULL)
+		for (ibfd = info->input_bfds; isec == NULL; ibfd = ibfd->link.next)
+		  isec = bfd_get_section_by_name (ibfd, input_sec_name);
+
+	      fprintf(stderr, "* Setting '%s' in '%s' to 512byte alignment.\n",
+		      isec->name, isec->owner->filename);
+
+	      bfd_set_section_alignment (isec->owner, isec, 9); /* 512 alignment.  */
+	    }
+
+	  flagword flags;
+	  asection *s;
+	  bfd_vma padding = group_entry->padded_group_size -
+	    group_entry->group_size;
+
+	  /* It should be the case that there is always padding for the group
+	     SHA?  */
+	  BFD_ASSERT(padding > 0);
+	  char group_sec_name[100];
+	  sprintf (group_sec_name, ".ovlinput.__internal.padding.%u", i);
+	  fprintf (stderr, "- Creating padding section `%s` with size %lx\n",
+		   group_sec_name, padding);
+	  flags = bed->dynamic_sec_flags | SEC_READONLY | SEC_CODE;
+	  s = bfd_make_section_anyway_with_flags (htab->elf.dynobj,
+						  strdup(group_sec_name),
+						  flags);
+          s->size = padding;
+          s->contents = bfd_zalloc (htab->elf.dynobj, 512);
+	  BFD_ASSERT(s != NULL);
+	  bfd_set_section_alignment (htab->elf.dynobj, s, 0);
 	}
     }
 }

@@ -6528,6 +6528,28 @@ process_event_stop_test (struct execution_control_state *ecs)
       }
       return;
 
+    case BPSTAT_WHAT_CLEAR_OVLCALL_RESUME:
+      if (debug_infrun)
+	fprintf_unfiltered (gdb_stdlog,
+	  "infrun: BPSTAT_WHAT_CLEAR_OVLCALL_RESUME\n");
+      disable_ovlmgr_breakpoint (bp_ovlmgr_call_master);
+      inferior_thread ()->control.step_resume_breakpoint = NULL;
+
+      ecs->event_thread->stepping_over_breakpoint = 1;
+      keep_going (ecs);
+      return;
+
+    case BPSTAT_WHAT_CLEAR_OVLEXIT_RESUME:
+      if (debug_infrun)
+	fprintf_unfiltered (gdb_stdlog,
+	  "infrun: BPSTAT_WHAT_CLEAR_OVLEXIT_RESUME\n");
+      disable_ovlmgr_breakpoint (bp_ovlmgr_exit_master);
+      inferior_thread ()->control.step_resume_breakpoint = NULL;
+
+      ecs->event_thread->stepping_over_breakpoint = 1;
+      keep_going (ecs);
+      return;
+
     case BPSTAT_WHAT_SINGLE:
       if (debug_infrun)
 	fprintf_unfiltered (gdb_stdlog, "infrun: BPSTAT_WHAT_SINGLE\n");
@@ -6678,6 +6700,24 @@ process_event_stop_test (struct execution_control_state *ecs)
   frame = get_current_frame ();
   gdbarch = get_frame_arch (frame);
   fill_in_stop_func (gdbarch, ecs);
+
+  if (ecs->stop_func_name != 0
+      && ecs->stop_func_start == ecs->event_thread->suspend.stop_pc)
+    {
+      bptype type = lookup_ovlmgr_bp_type(ecs->stop_func_name);
+      if (type != bp_none)
+        {
+	  if (debug_infrun)
+	  fprintf_unfiltered (gdb_stdlog, "infrun: CB: enable %s bp\n",
+			      ecs->stop_func_name);
+
+	  breakpoint *bp = enable_ovlmgr_breakpoint (type);
+	  inferior_thread ()->control.step_resume_breakpoint = bp;
+
+	  keep_going (ecs);
+	  return;
+	}
+    }
 
   /* If stepping through a line, keep going if still within it.
 

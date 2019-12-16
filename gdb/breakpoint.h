@@ -152,6 +152,10 @@ enum bptype
 
     bp_thread_event,
 
+    /* Overlay manager resume points.  */
+    bp_ovlmgr_call_master,
+    bp_ovlmgr_exit_master,
+
     /* On the same principal, an overlay manager can arrange to call a
        magic location in the inferior whenever there is an interesting
        change in overlay status.  GDB can update its overlay tables
@@ -997,6 +1001,10 @@ enum bpstat_what_main_action
        BPSTAT_WHAT_KEEP_CHECKING.  */
     BPSTAT_WHAT_CLEAR_LONGJMP_RESUME,
 
+    /* Clear ovlmgr resume breakpoint.  */
+    BPSTAT_WHAT_CLEAR_OVLCALL_RESUME,
+    BPSTAT_WHAT_CLEAR_OVLEXIT_RESUME,
+
     /* Clear step resume breakpoint, and keep checking.  */
     BPSTAT_WHAT_STEP_RESUME,
 
@@ -1451,6 +1459,10 @@ extern void check_longjmp_breakpoint_for_call_dummy (struct thread_info *tp);
 
 extern void enable_overlay_breakpoints (void);
 extern void disable_overlay_breakpoints (void);
+
+extern bptype lookup_ovlmgr_bp_type (const char *func_name);
+extern breakpoint *enable_ovlmgr_breakpoint (bptype type);
+extern void disable_ovlmgr_breakpoint (bptype type);
 
 extern void set_std_terminate_breakpoint (void);
 extern void delete_std_terminate_breakpoint (void);

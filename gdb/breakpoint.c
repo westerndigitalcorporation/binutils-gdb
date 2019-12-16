@@ -3293,6 +3293,21 @@ create_internal_breakpoint (struct gdbarch *gdbarch,
   return b;
 }
 
+/* Overlay manager resume breakpoints.  */
+struct ovlmgr_entry_point {
+  const char *name;
+  const char *resume_name;
+  bptype resume_bp;
+};
+
+static const struct ovlmgr_entry_point ovlmgr_names[]
+  {
+    {"comrvEntry", "comrv_invoke_callee", bp_ovlmgr_call_master},
+    {"comrv_ret_from_callee", "comrv_exit_ret_to_caller",
+     bp_ovlmgr_exit_master}
+  };
+#define NUM_OVLMGR_NAMES ARRAY_SIZE(ovlmgr_names)
+
 static const char *const longjmp_names[] =
   {
     "longjmp", "_longjmp", "siglongjmp", "_siglongjmp"
@@ -3312,6 +3327,9 @@ struct breakpoint_objfile_data
     /* The breakpoint inserted at the above symbol.  */
     struct breakpoint *breakpoint = nullptr;
   } overlay;
+
+  /* Minimal symbol(s) for overlay manager events (if any).  */
+  struct bound_minimal_symbol ovlmgr_msym[NUM_OVLMGR_NAMES] {};
 
   /* Minimal symbol(s) for "longjmp", "siglongjmp", etc. (if any).  */
   struct bound_minimal_symbol longjmp_msym[NUM_LONGJMP_NAMES] {};
@@ -3484,6 +3502,55 @@ handle_overlay_bp_event (void)
   remove_breakpoints ();
   insert_breakpoints ();
 }
+
+static void
+create_ovlmgr_master_breakpoint (void)
+{
+  for (objfile *objfile : current_program_space->objfiles ())
+    {
+      int i;
+      struct gdbarch *gdbarch;
+      struct breakpoint_objfile_data *bp_objfile_data;
+
+      gdbarch = get_objfile_arch (objfile);
+
+      bp_objfile_data = get_breakpoint_objfile_data (objfile);
+
+      for (i = 0; i < NUM_OVLMGR_NAMES; i++)
+      {
+        struct breakpoint *b;
+        const char *func_name;
+        CORE_ADDR addr;
+        struct explicit_location explicit_loc;
+
+        if (msym_not_found_p (bp_objfile_data->ovlmgr_msym[i].minsym))
+          continue;
+
+        func_name = ovlmgr_names[i].resume_name;
+        if (bp_objfile_data->ovlmgr_msym[i].minsym == NULL)
+        {
+          struct bound_minimal_symbol m;
+
+          m = lookup_minimal_symbol_text (func_name, objfile);
+          if (m.minsym == NULL)
+          {
+          /* Prevent future lookups in this objfile.  */
+            bp_objfile_data->ovlmgr_msym[i].minsym = &msym_not_found;
+            continue;
+          }
+          bp_objfile_data->ovlmgr_msym[i] = m;
+        }
+
+        addr = BMSYMBOL_VALUE_ADDRESS (bp_objfile_data->ovlmgr_msym[i]);
+        b = create_internal_breakpoint (gdbarch, addr, ovlmgr_names[i].resume_bp,
+					&internal_breakpoint_ops);
+        initialize_explicit_location (&explicit_loc);
+        explicit_loc.function_name = ASTRDUP (func_name);
+        b->location = new_explicit_location (&explicit_loc);
+        b->enable_state = bp_disabled;
+      }
+    }
+  }
 
 static void
 create_longjmp_master_breakpoint (void)
@@ -5918,6 +5985,12 @@ bpstat_what (bpstat bs_head)
 	  else
 	    this_action = BPSTAT_WHAT_SINGLE;
 	  break;
+	case bp_ovlmgr_call_master:
+	  this_action = BPSTAT_WHAT_CLEAR_OVLCALL_RESUME;
+	  break;
+	case bp_ovlmgr_exit_master:
+	  this_action = BPSTAT_WHAT_CLEAR_OVLEXIT_RESUME;
+	  break;
 	case bp_step_resume:
 	  if (bs->stop)
 	    this_action = BPSTAT_WHAT_STEP_RESUME;
@@ -6266,6 +6339,8 @@ bptype_string (enum bptype type)
     {bp_std_terminate, "std::terminate"},
     {bp_shlib_event, "shlib events"},
     {bp_thread_event, "thread events"},
+    {bp_ovlmgr_call_master, "overlay manager call master"},
+    {bp_ovlmgr_exit_master, "overlay manager exit master"},
     {bp_overlay_event, "overlay events"},
     {bp_longjmp_master, "longjmp master"},
     {bp_std_terminate_master, "std::terminate master"},
@@ -6431,6 +6506,7 @@ print_one_breakpoint_location (struct breakpoint *b,
 	    *last_loc = b->loc;
 	}
     }
+
 
   if (loc != NULL && !header_of_multiple)
     {
@@ -7291,6 +7367,8 @@ bp_location_from_bp_type (bptype type)
     case bp_std_terminate:
     case bp_shlib_event:
     case bp_thread_event:
+    case bp_ovlmgr_call_master:
+    case bp_ovlmgr_exit_master:
     case bp_overlay_event:
     case bp_jit_event:
     case bp_longjmp_master:
@@ -7689,6 +7767,51 @@ disable_overlay_breakpoints (void)
       b->enable_state = bp_disabled;
       update_global_location_list (UGLL_DONT_INSERT);
       overlay_events_enabled = 0;
+    }
+}
+
+bptype
+lookup_ovlmgr_bp_type(const char *func_name) {
+  for (int i = 0; i < NUM_OVLMGR_NAMES; i++)
+    {
+      if (!strncmp(ovlmgr_names[i].name, func_name, strlen(func_name)))
+        {
+          return ovlmgr_names[i].resume_bp;
+        }
+    }
+  return bp_none;
+}
+
+breakpoint *
+enable_ovlmgr_breakpoint (bptype type)
+{
+  struct breakpoint *b;
+
+  gdb_assert (type == bp_ovlmgr_call_master || type == bp_ovlmgr_exit_master);
+
+  ALL_BREAKPOINTS (b)
+    if (b->type == type)
+    {
+      b->enable_state = bp_enabled;
+      update_global_location_list (UGLL_MAY_INSERT);
+      return b;
+    }
+
+  gdb_assert(false);
+}
+
+void
+disable_ovlmgr_breakpoint (bptype type)
+{
+  struct breakpoint *b;
+
+  gdb_assert (type == bp_ovlmgr_call_master || type == bp_ovlmgr_exit_master);
+
+  ALL_BREAKPOINTS (b)
+    if (b->type == type)
+    {
+      b->enable_state = bp_disabled;
+      update_global_location_list (UGLL_DONT_INSERT);
     }
 }
 
@@ -12922,6 +13045,8 @@ internal_bkpt_re_set (struct breakpoint *b)
     {
       /* Delete overlay event and longjmp master breakpoints; they
 	 will be reset later by breakpoint_re_set.  */
+    case bp_ovlmgr_call_master:
+    case bp_ovlmgr_exit_master:
     case bp_overlay_event:
     case bp_longjmp_master:
     case bp_std_terminate_master:
@@ -12976,6 +13101,13 @@ internal_bkpt_print_it (bpstat bs)
       /* Not sure how we will get here.
 	 GDB should not stop for these breakpoints.  */
       printf_filtered (_("Thread Event Breakpoint: gdb should not stop!\n"));
+      break;
+
+    case bp_ovlmgr_call_master:
+    case bp_ovlmgr_exit_master:
+      /* These are used for skipping the overlay manager when stepping, GDB
+         should not stop for these.  */
+      printf_filtered (_("Overlay Manager Breakpoint: gdb should not stop!\n"));
       break;
 
     case bp_overlay_event:
@@ -14182,6 +14314,7 @@ breakpoint_re_set (void)
     jit_breakpoint_re_set ();
   }
 
+  create_ovlmgr_master_breakpoint ();
   create_overlay_event_breakpoint ();
   create_longjmp_master_breakpoint ();
   create_std_terminate_master_breakpoint ();

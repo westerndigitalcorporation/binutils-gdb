@@ -30,7 +30,6 @@ extern FILE * riscv_grouping_file;
 static void
 riscv_elf_before_allocation (void)
 {
-  fprintf(stderr, "* riscv_elf_before_allocation\n");
   gld${EMULATION_NAME}_before_allocation ();
 
   LANG_FOR_EACH_INPUT_STATEMENT(is)
@@ -43,15 +42,15 @@ riscv_elf_before_allocation (void)
 	  : "";
 
 	/* Produce an error if the input section name starts with ".ovlinput",
-         and the output name is not ".ovlallfns".  */
+	 and the output name is not ".ovlgrpdata".  */
 	if (strncmp (secname, ".ovlinput", strlen(".ovlinput")) == 0 &&
-	    strcmp (dstname, ".ovlallfns"))
-          {
+	    strcmp (dstname, ".ovlgrpdata"))
+	  {
 	    fprintf(stderr, "* '%s': '%s' -> '%s'\n", is->filename, secname,
-		    dstname);
-            //einfo(_("%F%P: Input section %s not correctly placed in"
-		    //".ovlallfns\n"), secname);
-          }
+	            dstname);
+	    einfo(_("%F%P: Input section %s not correctly placed in"
+	            ".ovlgrpdata\n"), secname);
+	  }
 	sec = sec->next;
       }
   }
@@ -129,6 +128,7 @@ PARSE_AND_LIST_PROLOGUE='
 #define OPTION_GROUPING_TOOL		302
 #define OPTION_GROUPING_TOOL_ARGS	303
 #define OPTION_FIRST_GROUP_NUMBER	304
+#define OPTION_COMRV_DEBUG 		305
 '
 
 PARSE_AND_LIST_LONGOPTS='
@@ -136,6 +136,7 @@ PARSE_AND_LIST_LONGOPTS='
   { "grouping-tool",      required_argument, NULL, OPTION_GROUPING_TOOL },
   { "grouping-tool-args", required_argument, NULL, OPTION_GROUPING_TOOL_ARGS },
   { "first-group-number", required_argument, NULL, OPTION_FIRST_GROUP_NUMBER },
+  { "comrv-debug",        no_argument,       NULL, OPTION_COMRV_DEBUG },
 '
 
 PARSE_AND_LIST_OPTIONS='
@@ -181,6 +182,9 @@ PARSE_AND_LIST_ARGS_CASES='
 	  einfo (_("%P: warning: ignoring invalid --first-group-number value %s\n"),
 	         optarg);
       }
+      break;
+    case OPTION_COMRV_DEBUG:
+      riscv_comrv_debug = TRUE;
       break;
 '
 

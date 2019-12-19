@@ -2714,11 +2714,6 @@ wild_sort (lang_wild_statement_type *wild,
 	   lang_input_statement_type *file,
 	   asection *section)
 {
-  //static bfd_boolean my_done = FALSE;
-  //if (!my_done) {
-    //my_done = TRUE;
-    fprintf(stderr, "* wild_sort: %s -> %s\n", section->name, sec->spec.name);
-  //}
   lang_statement_union_type *l;
 
   if (!wild->filenames_sorted

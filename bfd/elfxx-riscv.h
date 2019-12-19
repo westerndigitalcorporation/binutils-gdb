@@ -110,4 +110,5 @@ bfd_boolean riscv_use_grouping_tool;
 char *riscv_grouping_tool;
 char *riscv_grouping_tool_args;
 bfd_vma riscv_ovl_first_group_number;
+bfd_boolean riscv_comrv_debug;
 

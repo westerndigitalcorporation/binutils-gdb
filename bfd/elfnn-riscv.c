@@ -21,7 +21,6 @@
    see <http://www.gnu.org/licenses/>.  */
 
 /* This file handles RISC-V ELF targets.  */
-
 #include "sysdep.h"
 #include "bfd.h"
 #include "libbfd.h"
@@ -81,9 +80,6 @@ struct riscv_elf_link_hash_entry
   /* Track whether this symbol needs an overlay PLT entry.  */
   int needs_ovlplt_entry;
 
-  /* Track whether this symbol needs an overlay multigroup entry.  */
-  int needs_ovlmultigroup_entry;
-
   /* Track whether this symbols is referred to by an overlay relocation,
      and therefore needs to exist in at least one overlay group.  */
   int needs_overlay_group;
@@ -125,6 +121,30 @@ struct _bfd_riscv_elf_obj_tdata
 #include "elf/common.h"
 #include "elf/internal.h"
 
+struct ovl_group_list_entry
+{
+  bfd_boolean is_initialized;
+
+  int n_functions;
+  const char **functions;
+
+  /* Size of the groups contents, size of it when padded, and the offset
+     to the start of the group in the .ovlgrpdata output section.  */
+  bfd_vma group_size;
+  bfd_vma padded_group_size;
+  bfd_vma ovlgrpdata_offset;
+
+  /* The first and last functions allocated to this group.  */
+  const char *first_func;
+  const char *last_func;
+};
+
+struct ovl_group_list
+{
+  int n_groups;
+  struct ovl_group_list_entry *groups;
+};
+
 struct riscv_elf_link_hash_table
 {
   struct elf_link_hash_table elf;
@@ -143,9 +163,6 @@ struct riscv_elf_link_hash_table
   /* Offset to the next free overlay plt entry.  */
   bfd_vma next_ovlplt_offset;
 
-  /* Short cut to output section containing the overlay group data.  */
-  asection *sovlgroupdata;
-
   /* Sizes for the group table and multigroup table, which will
      populate group 0.  */
   bfd_vma ovl_group_table_size;
@@ -153,7 +170,7 @@ struct riscv_elf_link_hash_table
 
   /* Mappings from groups to functions and vice-versa.  */
   struct bfd_hash_table ovl_func_table;
-  struct bfd_hash_table ovl_group_table;
+  struct ovl_group_list ovl_group_list;
   bfd_boolean ovl_tables_populated;
 };
 
@@ -295,58 +312,12 @@ riscv_make_ovlplt_entry (bfd_vma addr, uint32_t *entry)
   return TRUE;
 }
 
-/* Linked list of overlay functions.  */
-
-struct riscv_ovl_functions
-{
-  char * name;
-  struct riscv_ovl_functions *next;
-};
-
-/* Hash entry storing information about an overlay group, including
-   a list of the function contained within it.
-
-   e.g. If FuncA, FuncC and FuncD belong to group 3, this is stored as:
-
-     entry->root.string = "3"
-     entry->root.hash   = hash("3")
-     entry->functions   = FuncA -> FuncC -> FuncD -> NULL
-
-   group_size and padded_group_size are the unpadded and padded group
-   sizes respectively, calculated in riscv_elf_size_dynamic_sections.
-   ovlgrpdata_offset is also calculcated in riscv_elf_size_dynamic_sections once
-   the size of all of the groups has been finalized and their layout in
-   .ovlgrpdata is known.
-*/
-
-struct riscv_ovl_group_hash_entry
-{
-  struct bfd_hash_entry root;
-  /* The group number */
-  unsigned group;
-
-  /* List of functions that belong to this group.  */
-  struct riscv_ovl_functions *functions;
-  struct riscv_ovl_functions *tail;
-
-  /* Size of the groups contents, size of it when padded, and the offset
-     to the start of the group in the .ovlgrpdata output section.  */
-  bfd_vma group_size;
-  bfd_vma padded_group_size;
-  bfd_vma ovlgrpdata_offset;
-
-  /* The first function which was allocated to this group.  */
-  const char *first_func;
-  const char *last_func;
-};
-
 /* Linked list of overlay group ids.  */
-
-struct riscv_ovl_func_group_info
+struct ovl_func_group_info
 {
   bfd_vma id;
   bfd_vma offset;
-  struct riscv_ovl_func_group_info *next;
+  struct ovl_func_group_info *next;
 };
 
 /* Hash entry storing the groups to which a function belongs.
@@ -359,41 +330,78 @@ struct riscv_ovl_func_group_info
      entry->multigroup  = TRUE
      entry->multigroup_offset = 0;
 */
-
-struct riscv_ovl_func_hash_entry
+struct ovl_func_hash_entry
 {
   struct bfd_hash_entry root;
   /* List of groups to which the function belongs.  */
-  struct riscv_ovl_func_group_info *groups;
-  struct riscv_ovl_func_group_info *tail;
+  struct ovl_func_group_info *groups;
+  struct ovl_func_group_info *tail;
   /* TRUE if function belongs to more than one group.  */
   bfd_boolean multigroup;
   bfd_vma multigroup_offset;
 };
 
-/* Look up an entry in an overlay grouping to function hash table.  */
+static struct ovl_group_list_entry *
+ovl_group_list_newfunc (struct ovl_group_list *list, int group);
 
-#define riscv_ovl_group_hash_lookup(table, string, create, copy) \
-  ((struct riscv_ovl_group_hash_entry *)                         \
-   bfd_hash_lookup (table, (string), (create), (copy)))
+/* Retrieve or create a new entry in the overlay group list.  */
+static struct ovl_group_list_entry *
+ovl_group_list_lookup (struct ovl_group_list *ovl_group_list,
+                       int group, bfd_boolean create)
+{
+  BFD_ASSERT (ovl_group_list);
+  BFD_ASSERT (ovl_group_list->groups);
 
-/* Traverse an overlay grouping to function hash table.  */
+  if (group >= ovl_group_list->n_groups)
+    {
+      if (create)
+	{
+	  return ovl_group_list_newfunc (ovl_group_list, group);
+	}
+      else
+	return NULL;
+    }
+  else
+    {
+      if (ovl_group_list->groups[group].is_initialized)
+	{
+	  return &ovl_group_list->groups[group];
+	}
+      else if (create)
+	{
+	  return ovl_group_list_newfunc (ovl_group_list, group);
+	}
+      else
+	return NULL;
+    }
+}
 
-#define riscv_ovl_group_hash_traverse(table, func, info)          \
-  (bfd_hash_traverse                                              \
-   (table,                                                        \
-    (bfd_boolean (*) (struct bfd_hash_entry *, void *)) (func),   \
-    (info)))
+static bfd_boolean
+ovl_group_list_traverse (struct ovl_group_list *ovl_group_list,
+                         bfd_boolean (*func) (struct ovl_group_list_entry *, int, void *),
+                         void *info)
+{
+  bfd_boolean ret = TRUE;
+  for (int i = 0; i < ovl_group_list->n_groups; i++)
+    {
+      struct ovl_group_list_entry *entry = &ovl_group_list->groups[i];
+      if (entry->is_initialized)
+        ret = func(entry, i, info);
+      if (ret == FALSE)
+        break;
+    }
+  return ret;
+}
 
 /* Look up an entry in an overlay grouping hash table.  */
 
-#define riscv_ovl_func_hash_lookup(table, string, create, copy) \
-  ((struct riscv_ovl_func_hash_entry *)                         \
+#define ovl_func_hash_lookup(table, string, create, copy) \
+  ((struct ovl_func_hash_entry *)                         \
    bfd_hash_lookup (table, (string), (create), (copy)))
 
 /* Traverse an overlay group hash table.  */
 
-#define riscv_ovl_func_hash_traverse(table, func, info)           \
+#define ovl_func_hash_traverse(table, func, info)           \
   (bfd_hash_traverse                                              \
    (table,                                                        \
     (bfd_boolean (*) (struct bfd_hash_entry *, void *)) (func),   \
@@ -401,12 +409,11 @@ struct riscv_ovl_func_hash_entry
 
 /* Create a new entry in an overlay grouping hash_table.  */
 static struct bfd_hash_entry *
-riscv_ovl_func_hash_newfunc (struct bfd_hash_entry *entry,
-			     struct bfd_hash_table *table,
-			     const char *string)
+ovl_func_hash_newfunc (struct bfd_hash_entry *entry,
+                       struct bfd_hash_table *table,
+                       const char *string)
 {
-  struct riscv_ovl_func_hash_entry *ret =
-    (struct riscv_ovl_func_hash_entry *) entry;
+  struct ovl_func_hash_entry *ret = (struct ovl_func_hash_entry *) entry;
 
  /* Allocate the structure if it has not already been allocated by a
     derived class.  */
@@ -418,7 +425,7 @@ riscv_ovl_func_hash_newfunc (struct bfd_hash_entry *entry,
     }
 
  /* Call the allocation method of the base class.  */
-  ret = ((struct riscv_ovl_func_hash_entry *)
+  ret = ((struct ovl_func_hash_entry *)
       bfd_hash_newfunc ((struct bfd_hash_entry *) ret, table, string));
 
   /* Initialize local fields.  */
@@ -430,103 +437,94 @@ riscv_ovl_func_hash_newfunc (struct bfd_hash_entry *entry,
   return (struct bfd_hash_entry *) ret;
 }
 
-/* Create a new entry in an overlay grouping hash_table.  */
-static struct bfd_hash_entry *
-riscv_ovl_group_hash_newfunc (struct bfd_hash_entry *entry,
-			      struct bfd_hash_table *table,
-			      const char *string)
+static struct ovl_group_list_entry *
+ovl_group_list_newfunc (struct ovl_group_list *list, int group)
 {
-  struct riscv_ovl_group_hash_entry *ret =
-    (struct riscv_ovl_group_hash_entry *) entry;
+  BFD_ASSERT (list != NULL);
+  BFD_ASSERT (list->groups != NULL);
 
- /* Allocate the structure if it has not already been allocated by a
-    derived class.  */
-  if (ret == NULL)
+  if (group >= list->n_groups)
     {
-      ret = bfd_hash_allocate (table, sizeof (* ret));
-      if (ret == NULL)
-	return NULL;
+      list->groups = bfd_realloc (list->groups,
+                                  sizeof (*list->groups) * (group+1));
+      for ( ; list->n_groups < (group+1); list->n_groups++)
+        list->groups[list->n_groups].is_initialized = FALSE;
+    }
+  else
+    {
+      BFD_ASSERT (!list->groups[group].is_initialized);
     }
 
- /* Call the allocation method of the base class.  */
-  ret = ((struct riscv_ovl_group_hash_entry *)
-	 bfd_hash_newfunc ((struct bfd_hash_entry *) ret,
-				      table,
-				      string));
+  struct ovl_group_list_entry *ret = &list->groups[group];
 
-  /* Initialize local fields.  */
-  ret->group = atoi(string);
+  ret->n_functions = 0;
   ret->functions = NULL;
-  ret->tail = NULL;
   ret->group_size = 0;
   ret->padded_group_size = 0;
   ret->ovlgrpdata_offset = 0;
   ret->first_func = NULL;
   ret->last_func = NULL;
 
-  return (struct bfd_hash_entry *) ret;
+  ret->is_initialized = TRUE;
+  return ret;
 }
 
 /* Create a new overlay grouping hash table.  */
 
 static bfd_boolean
-riscv_ovl_func_hash_table_init (struct bfd_hash_table *table)
+ovl_func_hash_table_init (struct bfd_hash_table *table)
 {
-  bfd_hash_table_init (table,
-		       riscv_ovl_func_hash_newfunc,
-		       sizeof (struct riscv_ovl_func_hash_entry));
+  bfd_hash_table_init (table, ovl_func_hash_newfunc,
+		       sizeof (struct ovl_func_hash_entry));
   return TRUE;
 }
 
-/* Create a new overlay grouping hash table.  */
-
 static bfd_boolean
-riscv_ovl_group_hash_table_init (struct bfd_hash_table *table)
+ovl_group_list_init (struct ovl_group_list *list)
 {
-  bfd_hash_table_init (table, riscv_ovl_group_hash_newfunc,
-		       sizeof (struct riscv_ovl_group_hash_entry));
+  BFD_ASSERT (list != NULL);
+  list->n_groups = 0;
+
+  /* Allocate space for a single group even though there are none needed yet.
+     This means bfd_realloc can be used unconditionally when new groups are
+     added.  */
+  list->groups = bfd_malloc(sizeof (*list->groups));
   return TRUE;
 }
 
-/* Print an entry from an overlay grouping hash table.  */
-
+/* Print an entry from an overlay grouping list.  */
 static bfd_boolean
-riscv_print_group_entry (struct riscv_ovl_group_hash_entry *entry,
-			 void *info ATTRIBUTE_UNUSED)
+print_group_list_entry (struct ovl_group_list_entry *entry, int index,
+                              void *info ATTRIBUTE_UNUSED)
 {
-  fprintf (stderr, "Group %s", entry->root.string);
-  fprintf (stderr, " (output section offset: %lx, size 0x%lx, padded size 0x%lx)",
+  fprintf (stderr, "Group %d", index);
+  fprintf (stderr, " (output section offset: 0x%lx, size 0x%lx, padded size 0x%lx)",
            entry->ovlgrpdata_offset, entry->group_size,
            entry->padded_group_size);
   fputc (':', stderr);
 
-  struct riscv_ovl_functions *head = entry->functions;
-  while (head != NULL)
-    {
-      fprintf (stderr, " %s", head->name);
-      head = head->next;
-    }
-  fprintf(stderr, "\n");
+  for (int i = 0; i < entry->n_functions; i++)
+    fprintf (stderr, " %s", entry->functions[i]);
+  fprintf (stderr, "\n");
 
   return TRUE;
 }
 
-/* Print each entry in a group to function table.  */
-
+/* Print each entry in a group to function list.  */
 static void
-riscv_print_group_table (struct bfd_hash_table *table)
+print_group_list (struct ovl_group_list *list)
 {
-  riscv_ovl_group_hash_traverse (table, riscv_print_group_entry, NULL);
+  ovl_group_list_traverse (list, print_group_list_entry, NULL);
 }
 
 /* Print an entry from an overlay grouping hash table.  */
 
 static bfd_boolean
-riscv_print_func_entry (struct riscv_ovl_func_hash_entry *entry,
-			void *info ATTRIBUTE_UNUSED)
+print_func_entry (struct ovl_func_hash_entry *entry,
+                  void *info ATTRIBUTE_UNUSED)
 {
   fprintf (stderr, "Function %s:", entry->root.string);
-  struct riscv_ovl_func_group_info *head = entry->groups;
+  struct ovl_func_group_info *head = entry->groups;
   while (head != NULL)
     {
       fprintf (stderr, " %lu (@%lu)", head->id, head->offset);
@@ -540,24 +538,24 @@ riscv_print_func_entry (struct riscv_ovl_func_hash_entry *entry,
 /* Print each entry in an overlay grouping hash table.  */
 
 static void
-riscv_print_func_table (struct bfd_hash_table *table)
+print_func_table (struct bfd_hash_table *table)
 {
-  riscv_ovl_func_hash_traverse (table, riscv_print_func_entry, NULL);
+  ovl_func_hash_traverse (table, print_func_entry, NULL);
 }
 
 static bfd_boolean
-riscv_ovl_update_func (struct bfd_hash_table *table,
+ovl_update_func (struct bfd_hash_table *table,
 		       const char *func, bfd_vma group)
 {
-  struct riscv_ovl_func_hash_entry *entry;
-  struct riscv_ovl_func_group_info *this_node;
+  struct ovl_func_hash_entry *entry;
+  struct ovl_func_group_info *this_node;
 
-  entry = riscv_ovl_func_hash_lookup (table, func, TRUE, TRUE);
+  entry = ovl_func_hash_lookup (table, func, TRUE, TRUE);
   if (entry == NULL)
     return FALSE;
 
   this_node =  objalloc_alloc ((struct objalloc *) table->memory,
-				sizeof (struct riscv_ovl_func_group_info));
+				sizeof (struct ovl_func_group_info));
   this_node->id = group;
   this_node->offset = 0;
   this_node->next = NULL;
@@ -576,29 +574,36 @@ riscv_ovl_update_func (struct bfd_hash_table *table,
 }
 
 static bfd_boolean
-riscv_ovl_update_group (struct bfd_hash_table *table,
-			const char *group, const char *func)
+ovl_update_group (struct ovl_group_list *list,
+                  int group_id,
+                  const char *func)
 {
-  struct riscv_ovl_group_hash_entry *entry;
-  struct riscv_ovl_functions *this_node;
+  struct ovl_group_list_entry *group_entry;
 
-  entry = riscv_ovl_group_hash_lookup (table, group, TRUE, TRUE);
-  if (entry == NULL)
+  /* Update the entry in the group list.  */
+  group_entry = ovl_group_list_lookup (list, group_id, TRUE);
+  if (group_entry == NULL)
     return FALSE;
 
-  this_node =  objalloc_alloc ((struct objalloc *) table->memory,
-				sizeof (struct riscv_ovl_functions));
-  this_node->name = objalloc_alloc ((struct objalloc *) table->memory,
-				    strlen(func) + 1);
-  strcpy(this_node->name, func);
-  this_node->next = NULL;
-
-  if (entry->functions == NULL)
-    entry->functions = this_node;
+  /* FIXME: When should this memory be freed?  */
+  int n_functions = group_entry->n_functions + 1;
+  if (group_entry->functions == NULL)
+    {
+      group_entry->functions =
+	  bfd_malloc (n_functions * sizeof(*group_entry->functions));
+    }
   else
-    entry->tail->next = this_node;
-  entry->tail = this_node;
+    {
+      group_entry->functions =
+	  bfd_realloc (group_entry->functions,
+	               n_functions * sizeof(*group_entry->functions));
+    }
+  /* Take a copy of the function name.  */
+  char *func_name = bfd_malloc (strlen (func) + 1);
+  strcpy (func_name, func);
 
+  group_entry->functions[group_entry->n_functions] = func_name;
+  group_entry->n_functions = n_functions;
   return TRUE;
 }
 
@@ -606,7 +611,7 @@ riscv_ovl_update_group (struct bfd_hash_table *table,
 
 static bfd_boolean
 riscv_parse_grouping_line (char * line, struct bfd_hash_table *ovl_func_table,
-			   struct bfd_hash_table *ovl_group_table)
+			   struct ovl_group_list *ovl_group_list)
 {
   char *group_str, *endptr, *func;
   bfd_vma group;
@@ -629,22 +634,22 @@ riscv_parse_grouping_line (char * line, struct bfd_hash_table *ovl_func_table,
 	}
 
       if (group == 0)
-        {
-          _bfd_error_handler (
-               _("Invalid group id \"0\" in overlay grouping file"));
-          bfd_set_error (bfd_error_bad_value);
-        }
+	{
+	  _bfd_error_handler (
+	      _("Invalid group id \"0\" in overlay grouping file"));
+	  bfd_set_error (bfd_error_bad_value);
+	}
 
-      if (!riscv_ovl_update_func (ovl_func_table, func, group))
+      if (!ovl_update_func (ovl_func_table, func, group))
 	{
 	  _bfd_error_handler (_("Failed to add %s to ovl_func_table"), func);
 	  bfd_set_error (bfd_error_bad_value);
 	  return FALSE;
 	}
 
-      if (!riscv_ovl_update_group (ovl_group_table, group_str, func))
+      if (!ovl_update_group (ovl_group_list, group, func))
 	{
-	  _bfd_error_handler (_("Failed to add %s to ovl_group_table"),
+	  _bfd_error_handler (_("Failed to add %s to ovl_group_list"),
 			      group_str);
 	  bfd_set_error (bfd_error_bad_value);
 	  return FALSE;
@@ -667,9 +672,9 @@ riscv_parse_grouping_line (char * line, struct bfd_hash_table *ovl_func_table,
 /* Parse a csv containg grouping information for each function.  */
 
 static bfd_boolean
-riscv_parse_grouping_file (FILE * f,
-			   struct bfd_hash_table *ovl_func_table,
-			   struct bfd_hash_table *ovl_group_table)
+parse_grouping_file (FILE * f,
+                     struct bfd_hash_table *ovl_func_table,
+                     struct ovl_group_list *ovl_group_list)
 {
   int c;
   int i = 0;
@@ -695,7 +700,7 @@ riscv_parse_grouping_file (FILE * f,
 	    {
 	      line[i++] = '\0';
 	      if (!riscv_parse_grouping_line (line, ovl_func_table,
-					      ovl_group_table))
+	                                      ovl_group_list))
 	        {
 		  free(line);
 		  return FALSE;
@@ -725,14 +730,14 @@ riscv_parse_grouping_file (FILE * f,
 /* Store grouping info in a hash table.  */
 
 static bfd_boolean
-riscv_create_ovl_group_table (struct bfd_hash_table *ovl_func_table,
-			      struct bfd_hash_table *ovl_group_table,
-			      bfd_boolean *ovl_tables_populated)
+create_ovl_group_table (struct bfd_hash_table *ovl_func_table,
+                        struct ovl_group_list *ovl_group_list,
+                        bfd_boolean *ovl_tables_populated)
 {
   bfd_boolean ret;
   *ovl_tables_populated = FALSE;
 
-  ret = riscv_ovl_func_hash_table_init (ovl_func_table);
+  ret = ovl_func_hash_table_init (ovl_func_table);
   if (!ret)
     {
       _bfd_error_handler (_("Failed to initialize ovl_func_table table"));
@@ -740,25 +745,24 @@ riscv_create_ovl_group_table (struct bfd_hash_table *ovl_func_table,
       return FALSE;
     }
 
-  ret = riscv_ovl_group_hash_table_init (ovl_group_table);
+  ret = ovl_group_list_init (ovl_group_list);
   if (!ret)
     {
-      _bfd_error_handler (_("Failed to initialize ovl_group_table table"));
+      _bfd_error_handler (_("Failed to initialize ovl_group_list"));
       bfd_set_error (bfd_error_bad_value);
-      bfd_hash_table_free (ovl_func_table);
+      //ovl_group_list_free (ovl_group_list);
       return FALSE;
     }
 
   if (riscv_grouping_file != NULL)
     {
-      ret = riscv_parse_grouping_file (riscv_grouping_file, ovl_func_table,
-                                       ovl_group_table);
+      ret = parse_grouping_file (riscv_grouping_file, ovl_func_table,
+                                 ovl_group_list);
       if (!ret)
 	{
 	  _bfd_error_handler (_("Failed to create overlay grouping table"));
 	  bfd_set_error (bfd_error_bad_value);
 	  bfd_hash_table_free (ovl_func_table);
-	  bfd_hash_table_free (ovl_group_table);
 	  return FALSE;
 	}
       *ovl_tables_populated = TRUE;
@@ -768,64 +772,22 @@ riscv_create_ovl_group_table (struct bfd_hash_table *ovl_func_table,
   return ret;
 }
 
-struct bfd_and_link_info_pair {
-  bfd *bfd;
-  struct bfd_link_info *info;
-};
-
-/* Calculate and insert one overlay group section CRC value.  */
-static bfd_boolean
-riscv_emit_ovl_padding_and_crc_entry (struct riscv_ovl_group_hash_entry *entry,
-				      struct bfd_and_link_info_pair *pair)
-{
-  bfd *output_bfd = pair->bfd;
-  struct bfd_link_info *info = pair->info;
-  struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
-
-  fprintf (stderr, "Group %s: ", entry->root.string);
-  if (htab->sovlgroupdata != NULL)
-    {
-      if (entry->group_size == 0)
-	{
-	  fprintf(stderr, "(empty, skipping)\n");
-	  return TRUE;
-	}
-
-      /* Fill in the padding from group_size up to padded_group_size. Groups
-         are padded with the group number.  */
-      BFD_ASSERT (entry->group_size < entry->padded_group_size);
-
-      bfd_vma start_offset = entry->ovlgrpdata_offset + entry->group_size;
-      bfd_vma end_offset =
-	  entry->ovlgrpdata_offset + entry->padded_group_size - OVL_CRC_SZ;
-
-      bfd_vma offset;
-      for (offset = start_offset; offset < end_offset; offset += 2)
-	bfd_put_16 (output_bfd, entry->group,
-	            htab->sovlgroupdata->contents + offset);
-
-      /* Fill in the end of the group with the CRC of the contents.  */
-      /* TODO: [TC12], but use libiberty's xcrc32 as the default.  */
-      unsigned int crc = 0xffffffff;
-      crc = xcrc32(htab->sovlgroupdata->contents + entry->ovlgrpdata_offset,
-		   entry->padded_group_size - OVL_CRC_SZ, crc);
-      fprintf(stderr, "%x", crc);
-      bfd_put_32 (output_bfd, crc, (htab->sovlgroupdata->contents
-				    + entry->ovlgrpdata_offset
-				    + entry->padded_group_size
-				    - OVL_CRC_SZ));
-    }
-  fprintf(stderr, "\n");
-  return TRUE;
-}
-
 /* Build a version of the current ovl section based on what is currently loaded.  */
 static bfd_boolean
-riscv_build_current_ovl_section (struct bfd_link_info *info, void **data)
+build_current_ovl_section (struct bfd_link_info *info, void **data)
 {
   bfd *output_bfd = info->output_bfd;
   asection *sec = bfd_get_section_by_name (output_bfd, ".ovlgrpdata");
   BFD_ASSERT (sec != NULL);
+
+  /* Nasty hack: When the .ovlgrpdata output section is created it
+     is created with its flags initialized to the same flags as the
+     last constituent input section. Because the last input section
+     is a dynamic section, the output section erroneously picks up the
+     SEC_IN_MEMORY flag which causes bfd_get_section_contents to
+     fail when it tries to read from the "contents" of .ovlgrpdata.  */
+  sec->flags &= ~SEC_IN_MEMORY;
+
   void *section_data = malloc(sec->size);
   BFD_ASSERT (section_data != NULL);
   *data = section_data;
@@ -844,7 +806,7 @@ riscv_build_current_ovl_section (struct bfd_link_info *info, void **data)
     {
       if (isec->contents != NULL && isec->output_section == sec)
       {
-        memcpy (section_data + isec->output_offset, isec->contents, isec->size);
+	memcpy (section_data + isec->output_offset, isec->contents, isec->size);
       }
     }
   }
@@ -855,28 +817,26 @@ riscv_build_current_ovl_section (struct bfd_link_info *info, void **data)
 /* FIXME: Pass this along.  */
 static void *ovl_cached_data = NULL;
 
-/* The same function as RISCV_EMIT_OVL_PADDING_AND_CRC_ENTRY, but for split
-   up groups. This differs in that our output section is made of many inputs,
-   and these need writing to individually.  */
 static bfd_boolean
-riscv_emit_ovl_padding_and_crc_entry2 (struct riscv_ovl_group_hash_entry *entry,
-				      struct bfd_and_link_info_pair *pair)
+emit_ovl_padding_and_crc_entry (struct ovl_group_list_entry *entry,
+                                int group, void *data)
 {
-  bfd *output_bfd = pair->bfd;
-  fprintf (stderr, "Group %s*: ", entry->root.string);
+  if (riscv_comrv_debug)
+    fprintf (stderr, "Group %d*: ", group);
 
   if (entry->group_size == 0)
-  {
-	  fprintf(stderr, "(empty, skipping)\n");
-	  return TRUE;
-	}
+    {
+      if (riscv_comrv_debug)
+	fprintf(stderr, "(empty, skipping)\n");
+      return TRUE;
+    }
 
   BFD_ASSERT(ovl_cached_data != NULL);
 
   /* Load the padding section.  */
   char group_sec_name[100];
-  sprintf (group_sec_name, ".ovlinput.__internal.padding.%u", entry->group);
-  struct bfd_link_info *info = pair->info;
+  sprintf (group_sec_name, ".ovlinput.__internal.padding.%u", group);
+  struct bfd_link_info *info = data;
   struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
   asection *padding_sec = bfd_get_section_by_name (htab->elf.dynobj, group_sec_name);
   BFD_ASSERT(padding_sec != NULL);
@@ -886,31 +846,33 @@ riscv_emit_ovl_padding_and_crc_entry2 (struct riscv_ovl_group_hash_entry *entry,
   unsigned int crc = 0xffffffff;
   crc = xcrc32(ovl_cached_data + entry->ovlgrpdata_offset,
                padding_sec->size - OVL_CRC_SZ, crc);
-  fprintf(stderr, "%x", crc);
+  if (riscv_comrv_debug)
+    fprintf(stderr, "%x", crc);
 
   /* Emit the padding into the padding section.  */
   for (bfd_vma offs = 0; offs < padding_sec->size; offs += 2)
-    bfd_put_16 (htab->elf.dynobj, entry->group, padding_sec->contents + offs);
+    bfd_put_16 (htab->elf.dynobj, group, padding_sec->contents + offs);
 
   /* Put the 32-bit CRC at the end after the padding.  */
-  bfd_put_32 (output_bfd, crc, padding_sec->contents + padding_sec->size - OVL_CRC_SZ);
+  bfd_put_32 (info->output_bfd, crc,
+              padding_sec->contents + padding_sec->size - OVL_CRC_SZ);
 
-  fprintf (stderr, "\n");
+  if (riscv_comrv_debug)
+    fprintf (stderr, "\n");
   return TRUE;
 }
 
 /* Calculate and insert all overlay group sections CRC values.  */
 static void
-riscv_emit_ovl_padding_and_crc (struct bfd_hash_table *table,
-                                struct bfd_and_link_info_pair *pair)
+emit_ovl_padding_and_crc (struct ovl_group_list *list,
+                          struct bfd_link_info *info)
 {
-  fprintf(stderr, "Calculating CRCs\n================\n");
-  riscv_ovl_group_hash_traverse (table, riscv_emit_ovl_padding_and_crc_entry,
-				 pair);
-  riscv_build_current_ovl_section (pair->info, &ovl_cached_data);
+  if (riscv_comrv_debug)
+    fprintf(stderr, "Calculating CRCs\n================\n");
+
+  build_current_ovl_section (info, &ovl_cached_data);
   BFD_ASSERT(ovl_cached_data != NULL);
-  riscv_ovl_group_hash_traverse (table, riscv_emit_ovl_padding_and_crc_entry2,
-                                 pair);
+  ovl_group_list_traverse (list, emit_ovl_padding_and_crc_entry, info);
   free(ovl_cached_data);
 }
 
@@ -925,8 +887,8 @@ link_hash_newfunc (struct bfd_hash_entry *entry,
   if (entry == NULL)
     {
       entry =
-	bfd_hash_allocate (table,
-			   sizeof (struct riscv_elf_link_hash_entry));
+          bfd_hash_allocate (table,
+                             sizeof (struct riscv_elf_link_hash_entry));
       if (entry == NULL)
 	return entry;
     }
@@ -941,7 +903,6 @@ link_hash_newfunc (struct bfd_hash_entry *entry,
       eh->dyn_relocs = NULL;
       eh->tls_type = GOT_UNKNOWN;
       eh->needs_ovlplt_entry = FALSE;
-      eh->needs_ovlmultigroup_entry = FALSE;
       eh->needs_overlay_group = FALSE;
       eh->non_overlay_reference = FALSE;
       eh->overlay_groups_resolved = FALSE;
@@ -979,13 +940,15 @@ riscv_elf_link_hash_table_create (bfd *abfd)
   ret->ovl_multigroup_table_size = 0;
 
   bfd_boolean success;
-  success = riscv_create_ovl_group_table (&ret->ovl_func_table,
-                                          &ret->ovl_group_table,
-                                          &ret->ovl_tables_populated);
+  success = create_ovl_group_table (&ret->ovl_func_table, &ret->ovl_group_list,
+                                    &ret->ovl_tables_populated);
   if (success)
     {
-      riscv_print_func_table (&ret->ovl_func_table);
-      riscv_print_group_table (&ret->ovl_group_table);
+      if (riscv_comrv_debug)
+	{
+	  print_group_list (&ret->ovl_group_list);
+	  print_func_table (&ret->ovl_func_table);
+	}
     }
   else
     return NULL;
@@ -1017,36 +980,6 @@ riscv_elf_create_ovlplt_section (bfd *abfd, struct bfd_link_info *info)
   s->size = 0;
   htab->sovlplt = s;
 
-  return TRUE;
-}
-
-/* Create the output overlay group section.  */
-
-static bfd_boolean
-riscv_elf_create_ovl_group_section (bfd *abfd, struct bfd_link_info *info)
-{
-  struct riscv_elf_link_hash_table *htab;
-  htab = riscv_elf_hash_table (info);
-
-  /* This function may be called more than once.  */
-  if (htab->sovlgroupdata != NULL)
-    return TRUE;
-
-  flagword flags;
-  asection *s;
-  const struct elf_backend_data *bed = get_elf_backend_data (abfd);
-  flags = bed->dynamic_sec_flags | SEC_READONLY;
-
-  /* Create the output group section ".ovlgrpdata".  The locations of each
-     group and each function in this section will be calculated later.  */
-  s = bfd_make_section_anyway_with_flags (abfd, ".ovlgrpdata", flags);
-  if (s == NULL
-      || !bfd_set_section_alignment (abfd, s, bed->s->log_file_align))
-    return FALSE;
-  s->size = 0;
-  htab->sovlgroupdata = s;
-
-  riscv_print_group_table (&htab->ovl_group_table);
   return TRUE;
 }
 
@@ -1122,14 +1055,12 @@ static bfd_boolean
 riscv_elf_create_dynamic_sections (bfd *dynobj,
 				   struct bfd_link_info *info)
 {
-  fprintf(stderr, "* riscv_elf_create_dynamic_sections\n");
+  if (riscv_comrv_debug)
+    fprintf(stderr, "* riscv_elf_create_dynamic_sections\n");
   struct riscv_elf_link_hash_table *htab;
 
   htab = riscv_elf_hash_table (info);
   BFD_ASSERT (htab != NULL);
-
-  if (!riscv_elf_create_ovl_group_section (dynobj, info))
-    return FALSE;
 
   if (!riscv_elf_create_got_section (dynobj, info))
     return FALSE;
@@ -1361,12 +1292,6 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	case R_RISCV_OVL_LO12_I:
 	case R_RISCV_OVL_HI20:
 	case R_RISCV_OVL32:
-	  /* If not already created, this will create all of the sections
-	     to hold the contents of the overlay groups and the multigroup
-	     table.  */
-	  if (!riscv_elf_create_ovl_group_section (htab->elf.dynobj, info))
-	    return FALSE;
-
 	  /* Enable analysis of dynamic sections since the size of the
 	     created sections needs to be calculated later.  */
 	  info->dynamic = 1;
@@ -2006,7 +1931,8 @@ static unsigned ovl_max_group = 0;
 static bfd_boolean
 riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_info *info)
 {
-  fprintf(stderr, " * riscv_elf_overlay_preprocess\n");
+  if (riscv_comrv_debug)
+    fprintf(stderr, " * riscv_elf_overlay_preprocess\n");
   struct riscv_elf_link_hash_table *htab;
   bfd *dynobj;
   asection *s;
@@ -2025,8 +1951,8 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
   if (s != NULL)
   s->flags &= ~SEC_ALLOC;
 
-  /* Allocate space for the overlay PLT and overlay multigroup table based on
-     their sizes (determined when checking the relocs).  */
+  /* Allocate space for the overlay PLT table based on it's size
+     (determined when checking the relocs).  */
   if (htab->sovlplt)
     htab->sovlplt->contents =
 	(unsigned char *)bfd_zalloc (output_bfd, htab->sovlplt->size);
@@ -2211,9 +2137,9 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	      bfd_set_error (bfd_error_bad_value);
 	      return FALSE;
 	    }
-	  ret = riscv_parse_grouping_file (grouping_tool_out_file,
-	                                   &htab->ovl_func_table,
-	                                   &htab->ovl_group_table);
+	  ret = parse_grouping_file (grouping_tool_out_file,
+	                             &htab->ovl_func_table,
+	                             &htab->ovl_group_list);
 	  if (!ret)
 	    {
 	      _bfd_error_handler (_("Failed to create overlay grouping "
@@ -2280,9 +2206,9 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	  /* Skip the symbol if it's already been assigned a group - either
 	     because it was assigned by the grouping file or grouping tool,
 	     or because it has just been auto assigned.  */
-	  struct riscv_ovl_func_hash_entry *sym_groups =
-	      riscv_ovl_func_hash_lookup (&htab->ovl_func_table,
-	                                  sym_name, FALSE, FALSE);
+	  struct ovl_func_hash_entry *sym_groups =
+	      ovl_func_hash_lookup (&htab->ovl_func_table,
+	                            sym_name, FALSE, FALSE);
 	  if (sym_groups != NULL)
 	    continue;
 
@@ -2291,17 +2217,16 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	  char next_empty_group_str[24];
 	  for ( ; ; next_empty_group++)
 	    {
-	      sprintf (next_empty_group_str, "%u", next_empty_group);
-	      struct riscv_ovl_group_hash_entry *group_entry =
-	          riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
-	                                       next_empty_group_str, FALSE,
-	                                       FALSE);
-	      if (group_entry == NULL)
+	      /* Also look it up in the group list.  */
+	      struct ovl_group_list_entry *group_list_entry =
+	          ovl_group_list_lookup (&htab->ovl_group_list,
+	                                 next_empty_group, FALSE);
+	      if (group_list_entry == NULL)
 		break;
 	    }
 
-	  if (!riscv_ovl_update_func (&htab->ovl_func_table, sym_name,
-	                              next_empty_group))
+	  if (!ovl_update_func (&htab->ovl_func_table, sym_name,
+	                        next_empty_group))
 	    {
 	      _bfd_error_handler (_("Failed to add %s to ovl_func_table"),
 	                          sym_name);
@@ -2309,10 +2234,10 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	      return FALSE;
 	    }
 
-	  if (!riscv_ovl_update_group (&htab->ovl_group_table,
-	                               next_empty_group_str, sym_name))
+	  if (!ovl_update_group (&htab->ovl_group_list, next_empty_group,
+	                         sym_name))
 	    {
-	      _bfd_error_handler (_("Failed to add %s to ovl_group_table"),         
+	      _bfd_error_handler (_("Failed to add %s to ovl_group_list"),         
 	                          next_empty_group_str);
 	      bfd_set_error (bfd_error_bad_value);
 	      return FALSE;
@@ -2327,8 +2252,8 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 
   /* Make sure that group 0 is allocated, since the group table and multi
      group tables will be put into this section.  */
-  struct riscv_ovl_group_hash_entry *group0_entry =
-      riscv_ovl_group_hash_lookup (&htab->ovl_group_table, "0", TRUE, TRUE);
+  struct ovl_group_list_entry *group0_list_entry =
+      ovl_group_list_lookup (&htab->ovl_group_list, 0, TRUE);
 
   BFD_ASSERT (htab->ovl_tables_populated == TRUE);
   for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
@@ -2352,16 +2277,16 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	      (struct riscv_elf_link_hash_entry *)sym_hashes[i];
 	  asection *sec = eh->elf.root.u.def.section;
 
-          /* Skip this symbols if it's not a definition.  */
-          if (eh->elf.root.type != bfd_link_hash_defined
-              && eh->elf.root.type != bfd_link_hash_defweak)
-            continue;
+	  /* Skip this symbols if it's not a definition.  */
+	  if (eh->elf.root.type != bfd_link_hash_defined
+	      && eh->elf.root.type != bfd_link_hash_defweak)
+	    continue;
 
-          /* Also skip the symbol if it's already been handled here.  */
-          if (eh->overlay_groups_resolved == TRUE)
-            continue;
-          else
-            eh->overlay_groups_resolved = TRUE;
+	  /* Also skip the symbol if it's already been handled here.  */
+	  if (eh->overlay_groups_resolved == TRUE)
+	    continue;
+	  else
+	    eh->overlay_groups_resolved = TRUE;
 
 	  /* A symbol in an overlay group will be in a section with a
 	     name of the format .ovlinput.<symbol name>.  */
@@ -2384,9 +2309,9 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	  const char *sym_name = sec->name + strlen(".ovlinput.");
 
 	  /* Lookup all of the groups that this symbol exists in.  */
-	  struct riscv_ovl_func_hash_entry *sym_groups =
-	      riscv_ovl_func_hash_lookup (&htab->ovl_func_table,
-					  sym_name, FALSE, FALSE);
+	  struct ovl_func_hash_entry *sym_groups =
+	      ovl_func_hash_lookup (&htab->ovl_func_table, sym_name, FALSE,
+	                            FALSE);
 	  /* Every symbol that is referred to by an overlay relocation should
 	     have been allocated to a group by this point. The group should
 	     be provided by the grouping file, the grouping tool, or have been
@@ -2424,7 +2349,7 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	         table. A multigroup entry consists of a list of tokens
 	         (4-bytes each) followed by a 4-byte 0 terminator.  */
 	      int multigroup_entry_size;
-	      struct riscv_ovl_func_group_info *func_group_info;
+	      struct ovl_func_group_info *func_group_info;
 
 	      multigroup_entry_size = 0;
 	      for (func_group_info = sym_groups->groups; 
@@ -2438,44 +2363,63 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	      htab->ovl_multigroup_table_size += multigroup_entry_size;
 	    }
 
-	  char group_id_str[24];
-	  struct riscv_ovl_func_group_info *func_group_info;
+	  struct ovl_func_group_info *func_group_info;
 	  for (func_group_info = sym_groups->groups; func_group_info != NULL;
 	       func_group_info = func_group_info->next)
 	    {
 	      ovl_max_group = func_group_info->id > ovl_max_group
 		? func_group_info->id : ovl_max_group;
-	      /* Get the overlay group of the function that this belongs to.  */
-	      sprintf (group_id_str, "%lu", func_group_info->id);
-	      struct riscv_ovl_group_hash_entry *group_entry =
-		  riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
-					       group_id_str, FALSE, FALSE);
-	      BFD_ASSERT (group_entry != NULL);
+
+	      struct ovl_group_list_entry *group_list_entry =
+	          ovl_group_list_lookup (&htab->ovl_group_list,
+	                                 func_group_info->id, FALSE);
+	      BFD_ASSERT (group_list_entry != NULL);
 
 	      /* Allocate the symbol's offset into the output section for the
 	         group. This corresponds to the current size of the output
 	         section.  */
-	      func_group_info->offset = group_entry->group_size;
+	      func_group_info->offset = group_list_entry->group_size;
 
-        /* Keep track of the first function which was allocated to this
-           group.  */
-        if (group_entry->group_size == 0)
-          group_entry->first_func = sym_name;
-        group_entry->last_func = sym_name;
+	      /* Keep track of the first function which was allocated to this
+	         group.  */
+	      if (group_list_entry->group_size == 0)
+		group_list_entry->first_func = sym_name;
+	      group_list_entry->last_func = sym_name;
 
 	      /* Allocate space in the output group for the contents of the
 	         input section corresponding to the symbol, and re-pad to a
 		 4-byte boundary to allow offsets to remain valid.  */
-	      group_entry->group_size += sec->size;
-              if ((group_entry->group_size % 4) != 0)
-                group_entry->group_size += (group_entry->group_size % 4);
+	      group_list_entry->group_size += sec->size;
+	      if ((group_list_entry->group_size % 4) != 0)
+		group_list_entry->group_size += (group_list_entry->group_size % 4);
 
-	      if (group_entry->group_size + OVL_CRC_SZ
+	      if (group_list_entry->group_size + OVL_CRC_SZ
 		  > OVL_MAXGROUPSIZE)
 		{
 		  _bfd_error_handler (_
-		    ("%pB: error: Overlay group %s exceeds maximum group size"),
-		     output_bfd, group_entry->root.string);
+		    ("%pB: error: Overlay group %d exceeds maximum group size"),
+		     output_bfd, (int)func_group_info->id);
+		  bfd_set_error (bfd_error_bad_value);
+		  return FALSE;
+		}
+
+	      if (group_list_entry->group_size == 0)
+		group_list_entry->first_func = sym_name;
+	      group_list_entry->last_func = sym_name;
+
+	      /* Allocate space in the output group for the contents of the
+	         input section corresponding to the symbol, and re-pad to a
+		 4-byte boundary to allow offsets to remain valid.  */
+	      group_list_entry->group_size += sec->size;
+	      if ((group_list_entry->group_size % 4) != 0)
+		group_list_entry->group_size += (group_list_entry->group_size % 4);
+
+	      if (group_list_entry->group_size + OVL_CRC_SZ
+		  > OVL_MAXGROUPSIZE)
+		{
+		  _bfd_error_handler (_
+		    ("%pB: error: Overlay group %d exceeds maximum group size"),
+		     output_bfd, (int)func_group_info->id);
 		  bfd_set_error (bfd_error_bad_value);
 		  return FALSE;
 		}
@@ -2492,12 +2436,15 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
   /* Now that the size of the group table and multigroup table has been
      determined, we can use the sum of these as the size of group 0, which
      will hold these tables.  */
-  group0_entry->group_size =
+  group0_list_entry->group_size =
       htab->ovl_group_table_size + htab->ovl_multigroup_table_size;
 
-  fprintf(stderr, "Pre-size Table\n===========\n");
-  riscv_print_group_table (&htab->ovl_group_table);
-  riscv_print_func_table (&htab->ovl_func_table);
+  if (riscv_comrv_debug)
+    {
+      fprintf(stderr, "Pre-size Table\n===========\n");
+      print_group_list (&htab->ovl_group_list);
+      print_func_table (&htab->ovl_func_table);
+    }
 
   /* Now that the size of the groups is fixed calculated the padded size
      of each group, finalize the offset of each group, and calculate the
@@ -2506,50 +2453,43 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
   bfd_vma next_group_offset = 0;
   for (i = 0; i <= ovl_max_group; i++)
     {
-      char group_id_str[24];
-      sprintf (group_id_str, "%u", i);
-      struct riscv_ovl_group_hash_entry *group_entry =
-	  riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
-	                               group_id_str, FALSE, FALSE);
+      struct ovl_group_list_entry *group_list_entry =
+	  ovl_group_list_lookup (&htab->ovl_group_list,
+	                         i, FALSE);
       /* Ignore any gaps in the table.  */
-      if (group_entry == NULL)
+      if (group_list_entry == NULL)
 	continue;
 
       /* Calculate the padded size of the group.  */
-      group_entry->padded_group_size = group_entry->group_size;
-      group_entry->padded_group_size += OVL_CRC_SZ;
-      if (group_entry->padded_group_size % OVL_GROUPPAGESIZE)
-	group_entry->padded_group_size =
-	  ((group_entry->padded_group_size/OVL_GROUPPAGESIZE)+1)*OVL_GROUPPAGESIZE;
-
+      group_list_entry->padded_group_size = group_list_entry->group_size;
+      group_list_entry->padded_group_size += OVL_CRC_SZ;
+      if (group_list_entry->padded_group_size % OVL_GROUPPAGESIZE)
+	group_list_entry->padded_group_size =
+	  ((group_list_entry->padded_group_size/OVL_GROUPPAGESIZE)+1)*OVL_GROUPPAGESIZE;
+      
       /* Set the offset of the group to the next available offset.  */
-      group_entry->ovlgrpdata_offset = next_group_offset;
+      group_list_entry->ovlgrpdata_offset = next_group_offset;
 
       /* Add the padded group size to get the offet for the next group.
          The padding will be filled in once contents for the output
          section have been allocated.  */
-      next_group_offset += group_entry->padded_group_size;
+      next_group_offset += group_list_entry->padded_group_size;
     }
 
-  /* The final size of the output section is now known, allocate the
-     contents.  */
-  if (htab->sovlgroupdata)
+  if (riscv_comrv_debug)
     {
-      htab->sovlgroupdata->size = next_group_offset;
-      htab->sovlgroupdata->contents =
-          (unsigned char *)bfd_alloc (output_bfd, htab->sovlgroupdata->size);
+      fprintf(stderr, "Final Table\n===========\n");
+      print_group_list (&htab->ovl_group_list);
+      print_func_table (&htab->ovl_func_table);
     }
-
-  fprintf(stderr, "Final Table\n===========\n");
-  riscv_print_group_table (&htab->ovl_group_table);
-  riscv_print_func_table (&htab->ovl_func_table);
   return TRUE;
 }
 
 static bfd_boolean
 riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 {
-  fprintf(stderr, "* riscv_elf_size_dynamic_sections\n");
+  if (riscv_comrv_debug)
+    fprintf(stderr, "* riscv_elf_size_dynamic_sections\n");
   struct riscv_elf_link_hash_table *htab;
   bfd *dynobj;
   asection *s;
@@ -2829,19 +2769,16 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
   htab = riscv_elf_hash_table (info);
 
   /* Get the group(s) for the symbol.  */
-  struct riscv_ovl_func_hash_entry *func_groups =
-      riscv_ovl_func_hash_lookup(&htab->ovl_func_table,
-                                 entry->root.root.string, FALSE, FALSE);
+  struct ovl_func_hash_entry *func_groups =
+      ovl_func_hash_lookup(&htab->ovl_func_table, entry->root.root.string,
+                           FALSE, FALSE);
   BFD_ASSERT (func_groups != NULL);
 
   if (func_groups->multigroup == FALSE)
     {
-      char group_id_str[24];
-      sprintf (group_id_str, "%lu", func_groups->groups->id);
-
-      struct riscv_ovl_group_hash_entry *group_entry =
-          riscv_ovl_group_hash_lookup(&htab->ovl_group_table,
-                                      group_id_str, FALSE, FALSE);
+      struct ovl_group_list_entry *group_list_entry =
+          ovl_group_list_lookup (&htab->ovl_group_list,
+                                 func_groups->groups->id, FALSE);
 
       bfd *ibfd;
 
@@ -2850,28 +2787,28 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
       char group_first_input_sec_name[100];
       sprintf (group_first_input_sec_name,
                ".ovlinput.__internal.duplicate.%lu.%s",
-               func_groups->groups->id, group_entry->first_func);
+               func_groups->groups->id, group_list_entry->first_func);
 
       asection *group_first_input_sec = NULL;
       for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
-        {
-          group_first_input_sec =
-              bfd_get_section_by_name (ibfd, group_first_input_sec_name);
-          if (group_first_input_sec)
-            break;
-        }
+	{
+	  group_first_input_sec =
+	      bfd_get_section_by_name (ibfd, group_first_input_sec_name);
+	  if (group_first_input_sec)
+	    break;
+	}
       if (!group_first_input_sec)
-        {
-          sprintf (group_first_input_sec_name,
-                   ".ovlinput.%s", group_entry->first_func);
-          for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
-            {
-              group_first_input_sec =
-                  bfd_get_section_by_name (ibfd, group_first_input_sec_name);
-              if (group_first_input_sec)
-                break;
-            }
-        }
+	{
+	  sprintf (group_first_input_sec_name,
+	           ".ovlinput.%s", group_list_entry->first_func);
+	  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+	    {
+	      group_first_input_sec =
+	          bfd_get_section_by_name (ibfd, group_first_input_sec_name);
+	      if (group_first_input_sec)
+		break;
+	    }
+	}
 
       /* Now find the input section for the target function in this
          group.  */
@@ -2881,27 +2818,29 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
 
       asection *target_sym_input_sec = NULL;
       for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
-        {
-          target_sym_input_sec =
-              bfd_get_section_by_name (ibfd, target_sym_input_sec_name);
-          if (target_sym_input_sec)
-            break;
-        }
+	{
+	  target_sym_input_sec =
+	      bfd_get_section_by_name (ibfd, target_sym_input_sec_name);
+	  if (target_sym_input_sec)
+	    break;
+	}
       BFD_ASSERT (group_first_input_sec != NULL);
       BFD_ASSERT (target_sym_input_sec != NULL);
 
       bfd_vma offset_into_group = target_sym_input_sec->output_offset
                                   - group_first_input_sec->output_offset;
 
-      fprintf (stderr, "group_first_input_sec_name: %s\n", group_first_input_sec_name);
-      fprintf (stderr, "target_sym_input_sec_name:  %s\n", target_sym_input_sec_name);
+      if (riscv_comrv_debug)
+	{
+	  fprintf (stderr, "group_first_input_sec_name: %s\n", group_first_input_sec_name);
+	  fprintf (stderr, "target_sym_input_sec_name:  %s\n", target_sym_input_sec_name);
 
-      fprintf (stderr, "group_first_input_sec->output_offset: %lu\n", group_first_input_sec->output_offset);
-      fprintf (stderr, "target_sym_input_sec->output_offset:  %lu\n", target_sym_input_sec->output_offset);
+	  fprintf (stderr, "group_first_input_sec->output_offset: %lu\n", group_first_input_sec->output_offset);
+	  fprintf (stderr, "target_sym_input_sec->output_offset:  %lu\n", target_sym_input_sec->output_offset);
 
+	  fprintf (stderr, "OFFSET INTO GROUP: %lu\n", offset_into_group);
+	}
       BFD_ASSERT ((offset_into_group % 4) == 0);
-
-      fprintf (stderr, "OFFSET INTO GROUP: %lu\n", offset_into_group);
 
       return ovltoken(0, from_plt, offset_into_group / 4,
                       func_groups->groups->id);
@@ -2923,91 +2862,89 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
 	{
 	  /* Create the multigroup table entry, filling it with tokens
 	     for the function in each of the groups it is contained within.  */
-	  struct riscv_ovl_func_group_info *func_group_info;
+	  struct ovl_func_group_info *func_group_info;
 	  for (func_group_info = func_groups->groups; func_group_info != NULL;
 	       func_group_info = func_group_info->next)
 	    {
 	      bfd_vma token;
-
-	      char group_id_str[24];
-	      sprintf (group_id_str, "%lu", func_group_info->id);
-
-	      struct riscv_ovl_group_hash_entry *group_entry =
-		  riscv_ovl_group_hash_lookup(&htab->ovl_group_table,
-					      group_id_str, FALSE, FALSE);
-
+	      struct ovl_group_list_entry *group_list_entry =
+	          ovl_group_list_lookup(&htab->ovl_group_list,
+	                                func_group_info->id, FALSE);
 	      bfd *ibfd;
 
-              /* First find the input section for the first function in this
-                 group.  */
+	      /* First find the input section for the first function in this
+	         group.  */
 	      char group_first_input_sec_name[100];
 	      sprintf (group_first_input_sec_name,
-                       ".ovlinput.__internal.duplicate.%lu.%s",
-                       func_group_info->id, group_entry->first_func);
+	               ".ovlinput.__internal.duplicate.%lu.%s",
+	               func_group_info->id, group_list_entry->first_func);
 
 	      asection *group_first_input_sec = NULL;
-              for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
-                {
-                  group_first_input_sec =
-                      bfd_get_section_by_name (ibfd, group_first_input_sec_name);
-                  if (group_first_input_sec)
-                    break;
-                }
-              if (!group_first_input_sec)
-                {
-                  sprintf (group_first_input_sec_name,
-                           ".ovlinput.%s", group_entry->first_func);
-                  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
-                    {
-                      group_first_input_sec =
-                          bfd_get_section_by_name (ibfd, group_first_input_sec_name);
-                      if (group_first_input_sec)
-                        break;
-                    }
-                }
+	      for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+		{
+		  group_first_input_sec =
+		      bfd_get_section_by_name (ibfd, group_first_input_sec_name);
+		  if (group_first_input_sec)
+		    break;
+		}
+	      if (!group_first_input_sec)
+		{
+		  sprintf (group_first_input_sec_name,
+		           ".ovlinput.%s", group_list_entry->first_func);
+		  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+		    {
+		      group_first_input_sec =
+		          bfd_get_section_by_name (ibfd, group_first_input_sec_name);
+		      if (group_first_input_sec)
+			break;
+		    }
+		}
 
-              /* Now find the input section for the target function in this
-                 group.  */
+	      /* Now find the input section for the target function in this
+	         group.  */
 	      char target_sym_input_sec_name[100];
 	      sprintf (target_sym_input_sec_name,
 		       ".ovlinput.__internal.duplicate.%lu.%s",
-                       func_group_info->id, entry->root.root.string);
+	               func_group_info->id, entry->root.root.string);
 
 	      asection *target_sym_input_sec = NULL;
 	      for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
 		{
 		  target_sym_input_sec =
 		      bfd_get_section_by_name (ibfd, target_sym_input_sec_name);
-                  if (target_sym_input_sec)
-                    break;
+		  if (target_sym_input_sec)
+		    break;
 		}
-              if (!target_sym_input_sec)
-                {
-                  sprintf (target_sym_input_sec_name,
-                           ".ovlinput.%s", entry->root.root.string);
-                  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
-                    {
-                      target_sym_input_sec =
-                          bfd_get_section_by_name (ibfd, target_sym_input_sec_name);
-                      if (target_sym_input_sec)
-                        break;
-                    }
-                }
-              BFD_ASSERT (group_first_input_sec != NULL);
-              BFD_ASSERT (target_sym_input_sec != NULL);
+	      if (!target_sym_input_sec)
+		{
+		  sprintf (target_sym_input_sec_name,
+		           ".ovlinput.%s", entry->root.root.string);
+		  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+		    {
+		      target_sym_input_sec =
+		          bfd_get_section_by_name (ibfd, target_sym_input_sec_name);
+		      if (target_sym_input_sec)
+			break;
+		    }
+		}
+	      BFD_ASSERT (group_first_input_sec != NULL);
+	      BFD_ASSERT (target_sym_input_sec != NULL);
 
 	      bfd_vma offset_into_group = target_sym_input_sec->output_offset
 					  - group_first_input_sec->output_offset;
 
-              fprintf (stderr, "group_first_input_sec_name: %s\n", group_first_input_sec_name);
-              fprintf (stderr, "target_sym_input_sec_name:  %s\n", target_sym_input_sec_name);
+	      if (riscv_comrv_debug)
+		{
+		  fprintf (stderr, "group_first_input_sec_name: %s\n", group_first_input_sec_name);
+		  fprintf (stderr, "target_sym_input_sec_name:  %s\n", target_sym_input_sec_name);
 
-	      fprintf (stderr, "group_first_input_sec->output_offset: %lu\n", group_first_input_sec->output_offset);
-	      fprintf (stderr, "target_sym_input_sec->output_offset:  %lu\n", target_sym_input_sec->output_offset);
+		  fprintf (stderr, "group_first_input_sec->output_offset: %lu\n", group_first_input_sec->output_offset);
+		  fprintf (stderr, "target_sym_input_sec->output_offset:  %lu\n", target_sym_input_sec->output_offset);
+
+		  fprintf (stderr, "OFFSET INTO GROUP: %lu\n", offset_into_group);
+		}
 
 	      BFD_ASSERT ((offset_into_group % 4) == 0);
-
-	      fprintf (stderr, "OFFSET INTO GROUP: %lu\n", offset_into_group);
 
 	      token = ovltoken(0, 0, func_group_info->offset / 4,
 	                       func_group_info->id);
@@ -4339,8 +4276,6 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 
     bfd_vma offset = 0;
     unsigned group = 0;
-    char group_id_str[24];
-
     unsigned max_group = (htab->ovl_group_table_size / 2) - 3;
     for (group = 0; group <= (max_group + 1); group++)
       {
@@ -4349,132 +4284,65 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 	bfd_put_16 (htab->elf.dynobj, offset_stored,
 	            group_table_sec->contents + group * 2);
 
-	sprintf (group_id_str, "%u", group);
-  	struct riscv_ovl_group_hash_entry *group_entry =
-	riscv_ovl_group_hash_lookup (&htab->ovl_group_table, group_id_str,
-	                             FALSE, FALSE);
-	if (group_entry)
-	  offset += group_entry->padded_group_size;
+	struct ovl_group_list_entry *group_list_entry =
+	    ovl_group_list_lookup (&htab->ovl_group_list, group, FALSE);
+	if (group_list_entry)
+	  offset += group_list_entry->padded_group_size;
       }
     /* The last entry in the .ovlgrptbl is a null terminator.  */
     bfd_put_16 (htab->elf.dynobj, 0,
                group_table_sec->contents + ((max_group + 2) * 2));
   }
 
-  /* Iterate through the input symbols and if they are allocated to an
-     overlay group then copy the contents from .ovlallfns to the contents
-     of that group.  */
+  unsigned char *current_data;
+  build_current_ovl_section(info, (void*)&current_data);
+  BFD_ASSERT(current_data != NULL);
   for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
     {
-      unsigned int i, symcount;
-      Elf_Internal_Shdr *symtab_hdr;
-      struct elf_link_hash_entry **sym_hashes = elf_sym_hashes (ibfd);
-
-      if (! is_riscv_elf (ibfd))
-	continue;
-
-      symtab_hdr = &elf_symtab_hdr (ibfd);
-      symcount = ((symtab_hdr->sh_size / sizeof (ElfNN_External_Sym))
-	          - symtab_hdr->sh_info);
-      
-      for (i = 0; i < symcount; i++)
+      asection *isec;
+      for (isec = ibfd->sections; isec != NULL; isec = isec->next)
 	{
-	  struct elf_link_hash_entry *h = sym_hashes[i];
-	  asection *sec = h->root.u.def.section;
-
-	  /* A symbol in an overlay group will be in a section with a
-	     name of the format .ovlinput.<symbol name>.  */
-	  if (strncmp (sec->name, ".ovlinput.", strlen(".ovlinput.")) != 0)
-	    continue;
-	  const char *sym_name = sec->name + strlen(".ovlinput.");
-
-	  /* Lookup all of the groups that this symbol exists in.  */
-	  struct riscv_ovl_func_hash_entry *sym_groups =
-	      riscv_ovl_func_hash_lookup (&htab->ovl_func_table,
-					  sym_name, FALSE, FALSE);
-	  if (sym_groups == NULL)
-	    continue;
-
-	  /* Get each output group section and corresponding offset for the
-	     symbol. Copy the contents for the symbol from .ovlallfns to
-	     each section at the appropriate offset.  */
-	  char group_id_str[24];
-	  struct riscv_ovl_func_group_info *func_group_info;
-	  for (func_group_info = sym_groups->groups; func_group_info != NULL;
-	       func_group_info = func_group_info->next)
+	  if (strncmp(isec->name, ".ovlinput.", strlen(".ovlinput.")) == 0)
 	    {
-	      sprintf (group_id_str, "%lu", func_group_info->id);
-	      struct riscv_ovl_group_hash_entry *group_entry =
-		  riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
-					       group_id_str, FALSE, FALSE);
-	      BFD_ASSERT (group_entry != NULL);
+	      struct ovl_func_hash_entry *sym_groups =
+	          ovl_func_hash_lookup (&htab->ovl_func_table,
+	                                isec->name + strlen(".ovlinput."),
+	                                FALSE, FALSE);
+	      if (sym_groups == NULL)
+		continue;
 
-          /* Nasty hack: When the .ovlgrpdata output section is created it
-             is created with its flags initialized to the same flags as the
-             last constituent input section. Because the last input section
-             is a dynamic section, the output section erroneously picks up the
-             SEC_IN_MEMORY flag which causes bfd_get_section_contents to
-             fail when it tries to read from the "contents" of .ovlgrpdata.  */
-        sec->output_section->flags &= ~ SEC_IN_MEMORY;
+	      struct ovl_func_group_info *func_group_info;
+	      for (func_group_info = sym_groups->groups->next; func_group_info != NULL;
+	           func_group_info = func_group_info->next)
+		{
+		  char duplicate_func_name[200];
+		  sprintf (duplicate_func_name, ".ovlinput.__internal.duplicate.%lu.%s", func_group_info->id, isec->name + strlen(".ovlinput."));
 
-	      /* Copy the contents from the output section .ovlallfns, to the
-	         appropriate overlay group section for this symbol.  */
-	      bfd_get_section_contents (
-		  output_bfd, sec->output_section,
-		  htab->sovlgroupdata->contents
-		      + group_entry->ovlgrpdata_offset
-		      + func_group_info->offset,
-		  sec->output_offset, sec->size);
+		  if (riscv_comrv_debug)
+		    fprintf(stderr, "- Copy of %s in group %lu (%s)\n", isec->name, func_group_info->id, duplicate_func_name);
+		  asection *dup_sec = bfd_get_section_by_name(htab->elf.dynobj, duplicate_func_name);
+		  BFD_ASSERT(dup_sec != NULL);
+
+		  /* Nasty hack: When the .ovlgrpdata output section is created it
+		     is created with its flags initialized to the same flags as the
+		     last constituent input section. Because the last input section
+		     is a dynamic section, the output section erroneously picks up the
+		     SEC_IN_MEMORY flag which causes bfd_get_section_contents to
+		     fail when it tries to read from the "contents" of .ovlgrpdata.  */
+		  isec->output_section->flags &= ~ SEC_IN_MEMORY;
+
+		  bfd_get_section_contents (output_bfd, isec->output_section,
+		                            dup_sec->contents, isec->output_offset,
+		                            dup_sec->size);
+		}
 	    }
 	}
     }
-
-  unsigned char *current_data;
-  riscv_build_current_ovl_section(info, (void*)&current_data);
-  BFD_ASSERT(current_data != NULL);
-  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
-  {
-    asection *isec;
-    for (isec = ibfd->sections; isec != NULL; isec = isec->next)
-    {
-      if (strncmp(isec->name, ".ovlinput.", strlen(".ovlinput.")) == 0)
-      {
-        struct riscv_ovl_func_hash_entry *sym_groups =
-	        riscv_ovl_func_hash_lookup (&htab->ovl_func_table,
-					  isec->name + strlen(".ovlinput."), FALSE, FALSE);
-	      if (sym_groups == NULL)
-	        continue;
-
-        struct riscv_ovl_func_group_info *func_group_info;
-	      for (func_group_info = sym_groups->groups->next; func_group_info != NULL;
-	           func_group_info = func_group_info->next) {
-          char duplicate_func_name[200];
-          sprintf (duplicate_func_name, ".ovlinput.__internal.duplicate.%lu.%s", func_group_info->id, isec->name + strlen(".ovlinput."));
-          fprintf(stderr, "- Copy of %s in group %lu (%s)\n", isec->name, func_group_info->id, duplicate_func_name);
-          asection *dup_sec = bfd_get_section_by_name(htab->elf.dynobj, duplicate_func_name);
-          BFD_ASSERT(dup_sec != NULL);
-
-          /* Nasty hack: When the .ovlgrpdata output section is created it
-             is created with its flags initialized to the same flags as the
-             last constituent input section. Because the last input section
-             is a dynamic section, the output section erroneously picks up the
-             SEC_IN_MEMORY flag which causes bfd_get_section_contents to
-             fail when it tries to read from the "contents" of .ovlgrpdata.  */
-          isec->output_section->flags &= ~ SEC_IN_MEMORY;
-
-          bfd_get_section_contents (output_bfd, isec->output_section,
-                                    dup_sec->contents, isec->output_offset,
-                                    dup_sec->size);
-        }
-      }
-    }
-  }
   free(current_data);
 
   /* Now all functions have been copied, calculate and insert the overlay
      section padding and CRC.  */
-  struct bfd_and_link_info_pair pair = { output_bfd, info };
-  riscv_emit_ovl_padding_and_crc (&htab->ovl_group_table, &pair);
+  emit_ovl_padding_and_crc (&htab->ovl_group_list, info);
 
   if (htab->elf.sgotplt)
     {
@@ -5121,41 +4989,40 @@ riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count,
       struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (link_info);
 
       const char *sym_name = sec->name + strlen(".ovlinput.");
-      struct riscv_ovl_func_hash_entry *func_entry =
-        riscv_ovl_func_hash_lookup (&htab->ovl_func_table, sym_name, FALSE,
-                                    FALSE);
+      struct ovl_func_hash_entry *func_entry =
+          ovl_func_hash_lookup (&htab->ovl_func_table, sym_name, FALSE, FALSE);
       if (func_entry)
-        {
-          struct riscv_ovl_func_group_info *groups;
-          /* Get the accompanying padding sections and increase their size.  */
-          char group_padding_section_name[100];
-          for (groups = func_entry->groups; groups != NULL;
-               groups = groups->next)
-            {
-              sprintf (group_padding_section_name,
-                       ".ovlinput.__internal.padding.%lu",
-                       groups->id);
-              asection *group_padding_section =
-                  bfd_get_section_by_name (htab->elf.dynobj,
-                                           group_padding_section_name);
-              group_padding_section->size += count;
-            }
+	{
+	  struct ovl_func_group_info *groups;
+	  /* Get the accompanying padding sections and increase their size.  */
+	  char group_padding_section_name[100];
+	  for (groups = func_entry->groups; groups != NULL;
+	       groups = groups->next)
+	    {
+	      sprintf (group_padding_section_name,
+	               ".ovlinput.__internal.padding.%lu",
+	               groups->id);
+	      asection *group_padding_section =
+	          bfd_get_section_by_name (htab->elf.dynobj,
+	                                   group_padding_section_name);
+	      group_padding_section->size += count;
+	    }
 
-          /* Get any duplicated sections and reduce their size.  */
-          char sym_duplicate_section_name[100];
-          for (groups = func_entry->groups; groups != NULL;
-               groups = groups->next)
-            {
-              sprintf (sym_duplicate_section_name,
-                       ".ovlinput.__internal.duplicate.%lu.%s",
-                       groups->id, sym_name);
-              asection *sym_duplicate_section =
-                  bfd_get_section_by_name (htab->elf.dynobj,
-                                           sym_duplicate_section_name);
-              if (sym_duplicate_section)
-                sym_duplicate_section->size -= count;
-            }
-        }
+	  /* Get any duplicated sections and reduce their size.  */
+	  char sym_duplicate_section_name[100];
+	  for (groups = func_entry->groups; groups != NULL;
+	       groups = groups->next)
+	    {
+	      sprintf (sym_duplicate_section_name,
+	               ".ovlinput.__internal.duplicate.%lu.%s",
+	               groups->id, sym_name);
+	      asection *sym_duplicate_section =
+	          bfd_get_section_by_name (htab->elf.dynobj,
+		                           sym_duplicate_section_name);
+	      if (sym_duplicate_section)
+		sym_duplicate_section->size -= count;
+	    }
+	}
     }
 
   memmove (contents + addr, contents + addr + count, toaddr - addr - count);
@@ -5879,15 +5746,18 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
   static bfd_boolean pass0 = FALSE, pass1 = FALSE, pass2 = FALSE;
   if (info->relax_pass == 0 && !pass0) {
     pass0 = TRUE;
-    fprintf(stderr, "* _bfd_riscv_relax_section(0)\n");
+    if (riscv_comrv_debug)
+      fprintf(stderr, "* _bfd_riscv_relax_section(0)\n");
   }
   if (info->relax_pass == 1 && !pass1) {
     pass1 = TRUE;
-    fprintf(stderr, "* _bfd_riscv_relax_section(1)\n");
+    if (riscv_comrv_debug)
+      fprintf(stderr, "* _bfd_riscv_relax_section(1)\n");
   }
   if (info->relax_pass == 2 && !pass2) {
     pass2 = TRUE;
-    fprintf(stderr, "* _bfd_riscv_relax_section(2)\n");
+    if (riscv_comrv_debug)
+      fprintf(stderr, "* _bfd_riscv_relax_section(2)\n");
   }
   Elf_Internal_Shdr *symtab_hdr = &elf_symtab_hdr (abfd);
   struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
@@ -6270,7 +6140,8 @@ void riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info);
 void
 riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 {
-  fprintf(stderr, "* do_overlay_stuff_elfNNlriscv\n");
+  if (riscv_comrv_debug)
+    fprintf(stderr, "* do_overlay_stuff_elfNNlriscv\n");
   struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
   BFD_ASSERT (htab != NULL);
   const struct elf_backend_data *bed = get_elf_backend_data (htab->elf.dynobj);
@@ -6322,16 +6193,16 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 	  const char *sym_name = sec->name + strlen(".ovlinput.");
 
 	  /* Lookup all of the groups that this symbol exists in.  */
-	  struct riscv_ovl_func_hash_entry *sym_groups =
-	    riscv_ovl_func_hash_lookup (&htab->ovl_func_table,
-					sym_name, FALSE, FALSE);
+	  struct ovl_func_hash_entry *sym_groups =
+	      ovl_func_hash_lookup (&htab->ovl_func_table, sym_name, FALSE,
+	                            FALSE);
 	  if (sym_groups == NULL)
 	    continue;
 
 	  /* For all but the first group in this list, create a duplicate
 	     section for that group based on the name.  */
 	  char duplicate_func_name[200];
-	  struct riscv_ovl_func_group_info *func_group_info;
+	  struct ovl_func_group_info *func_group_info;
 	  BFD_ASSERT(sym_groups->groups != NULL);
 	  for (func_group_info = sym_groups->groups->next;
 	       func_group_info != NULL;
@@ -6342,14 +6213,16 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 		       ".ovlinput.__internal.duplicate.%lu.%s",
 		       func_group_info->id, sym_name);
 
-              /* Don't create the same duplicate section more than once.  */
-              if (bfd_get_section_by_name (htab->elf.dynobj,
-                                           duplicate_func_name))
-                continue;
+	      /* Don't create the same duplicate section more than once.  */
+	      if (bfd_get_section_by_name (htab->elf.dynobj,
+	                                   duplicate_func_name))
+		continue;
 
-	      fprintf (stderr,
-		       "- Creating duplicate section `%s` with size 0x%lx\n",
-		       duplicate_func_name, sec->size);
+	      if (riscv_comrv_debug)
+		fprintf (stderr,
+		         "- Creating duplicate section `%s` with size 0x%lx\n",
+		         duplicate_func_name, sec->size);
+
 	      s = bfd_make_section_anyway_with_flags (htab->elf.dynobj,
 						      strdup(duplicate_func_name),
 						      flags);
@@ -6371,23 +6244,19 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
      and SHA.  */
   for (unsigned i = 0; i <= ovl_max_group; i++)
     {
-      char group_id_str[24];
-      sprintf (group_id_str, "%u", i);
-
-      struct riscv_ovl_group_hash_entry *group_entry =
-	riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
-				     group_id_str, FALSE, FALSE);
-      if (group_entry)
+      struct ovl_group_list_entry *group_list_entry =
+          ovl_group_list_lookup (&htab->ovl_group_list, i, FALSE);
+      if (group_list_entry)
 	{
 	  /* Get the first input section allocated to this group and set
 	     its alignment to 512 bytes.  */
-	  if (group_entry->functions)
+	  if (group_list_entry->n_functions != 0)
 	    {
 	      char input_sec_name[100];
 	      char duplicate_sec_name[100];
-	      sprintf (input_sec_name, ".ovlinput.%s", group_entry->first_func);
+	      sprintf (input_sec_name, ".ovlinput.%s", group_list_entry->first_func);
 	      sprintf (duplicate_sec_name, ".ovlinput.__internal.duplicate.%u.%s",
-		       i, group_entry->first_func);
+		       i, group_list_entry->first_func);
 
 	      /* First look for a duplicate, if one is not found, then it is the
 		 original verison.  */
@@ -6397,30 +6266,34 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 		for (ibfd = info->input_bfds; isec == NULL; ibfd = ibfd->link.next)
 		  isec = bfd_get_section_by_name (ibfd, input_sec_name);
 
-	      fprintf(stderr, "* Setting '%s' in '%s' to 512byte alignment.\n",
-		      isec->name, isec->owner->filename);
+	      if (riscv_comrv_debug)
+		fprintf(stderr, "* Setting '%s' in '%s' to 512byte alignment.\n",
+		        isec->name, isec->owner->filename);
 
 	      bfd_set_section_alignment (isec->owner, isec, 9); /* 512 alignment.  */
 	    }
 
 	  flagword flags;
 	  asection *s;
-	  bfd_vma padding = group_entry->padded_group_size -
-	    group_entry->group_size;
+	  bfd_vma padding = group_list_entry->padded_group_size -
+	    group_list_entry->group_size;
 
 	  /* It should be the case that there is always padding for the group
 	     SHA?  */
 	  BFD_ASSERT(padding > 0);
 	  char group_sec_name[100];
 	  sprintf (group_sec_name, ".ovlinput.__internal.padding.%u", i);
-	  fprintf (stderr, "- Creating padding section `%s` with size %lx\n",
-		   group_sec_name, padding);
+
+	  if (riscv_comrv_debug)
+	    fprintf (stderr, "- Creating padding section `%s` with size %lx\n",
+	             group_sec_name, padding);
+
 	  flags = bed->dynamic_sec_flags | SEC_READONLY | SEC_CODE;
 	  s = bfd_make_section_anyway_with_flags (htab->elf.dynobj,
 						  strdup(group_sec_name),
 						  flags);
-          s->size = padding;
-          s->contents = bfd_zalloc (htab->elf.dynobj, 512);
+	  s->size = padding;
+	  s->contents = bfd_zalloc (htab->elf.dynobj, 512);
 	  BFD_ASSERT(s != NULL);
 	  bfd_set_section_alignment (htab->elf.dynobj, s, 0);
 	}
@@ -6458,36 +6331,39 @@ riscv_elf_overlay_sort_value (asection *s, struct bfd_link_info *info)
               strlen(".ovlinput.__internal.padding.")) == 0)
     {
       const char *group_id_str = s->name +
-        strlen(".ovlinput.__internal.padding.");
+          strlen(".ovlinput.__internal.padding.");
 
-      struct riscv_ovl_group_hash_entry *group_entry =
-        riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
-                                     group_id_str, FALSE, FALSE);
-      BFD_ASSERT(group_entry != NULL);
-      bfd_vma padding_offset = group_entry->padded_group_size -
-	group_entry->group_size;
-      fprintf(stderr, " - Offset of %s is %lx\n", s->name,
-              group_entry->ovlgrpdata_offset + padding_offset);
-      return -(group_entry->ovlgrpdata_offset + padding_offset);
+      int group_id = atoi (group_id_str);
+      struct ovl_group_list_entry *group_list_entry =
+          ovl_group_list_lookup (&htab->ovl_group_list, group_id, FALSE);
+      BFD_ASSERT(group_list_entry != NULL);
+
+      bfd_vma padding_offset = group_list_entry->padded_group_size -
+	  group_list_entry->group_size;
+
+      if (riscv_comrv_debug)
+	fprintf(stderr, " - Offset of %s is %lx\n", s->name,
+	        group_list_entry->ovlgrpdata_offset + padding_offset);
+
+      return -(group_list_entry->ovlgrpdata_offset + padding_offset);
     }
 
   /* If this is a duplicate of a function, look up its symbol hash and find the
      offset corresponding to that group, otherwise it must be the first entry. */
-  struct riscv_ovl_func_group_info *func_group_info = NULL;
+  struct ovl_func_group_info *func_group_info = NULL;
   if (strncmp(s->name, ".ovlinput.__internal.duplicate.",
               strlen(".ovlinput.__internal.duplicate.")) == 0)
     {
       const char *name_and_group = s->name +
-        strlen(".ovlinput.__internal.duplicate.");
+          strlen(".ovlinput.__internal.duplicate.");
       const char *sym_name = strchr(name_and_group, '.') + 1;
       BFD_ASSERT(sym_name != (char *)1);
       bfd_vma group_id;
       int matched = sscanf(name_and_group, "%lu.", &group_id);
       BFD_ASSERT(matched = 1);
 
-      struct riscv_ovl_func_hash_entry *sym_groups =
-        riscv_ovl_func_hash_lookup (&htab->ovl_func_table,
-				    sym_name, FALSE, FALSE);
+      struct ovl_func_hash_entry *sym_groups =
+          ovl_func_hash_lookup (&htab->ovl_func_table, sym_name, FALSE, FALSE);
       BFD_ASSERT(sym_groups != NULL);
       BFD_ASSERT(sym_groups->groups != NULL);
 
@@ -6496,10 +6372,10 @@ riscv_elf_overlay_sort_value (asection *s, struct bfd_link_info *info)
       for (func_group_info = sym_groups->groups->next;
 	   func_group_info != NULL;
 	   func_group_info = func_group_info->next)
-        {
-          if (func_group_info->id == group_id)
-            break;
-        }
+	{
+	  if (func_group_info->id == group_id)
+	    break;
+	}
     }
   else
     {
@@ -6510,25 +6386,25 @@ riscv_elf_overlay_sort_value (asection *s, struct bfd_link_info *info)
       const char *sym_name = s->name + strlen(".ovlinput.");
 
       /* This is not a duplicate, therefore it is the first group in the list.*/
-      struct riscv_ovl_func_hash_entry *sym_groups =
-        riscv_ovl_func_hash_lookup (&htab->ovl_func_table,
-				    sym_name, FALSE, FALSE);
+      struct ovl_func_hash_entry *sym_groups =
+          ovl_func_hash_lookup (&htab->ovl_func_table, sym_name, FALSE, FALSE);
       BFD_ASSERT(sym_groups != NULL);
       BFD_ASSERT(sym_groups->groups != NULL);
       func_group_info = sym_groups->groups;
     }
 
   BFD_ASSERT(func_group_info != NULL);
-  /* func_group_info holds current group and offset, need to find full offset. */
-  char group_id_str[24];
-  sprintf(group_id_str, "%lu", func_group_info->id);
-  struct riscv_ovl_group_hash_entry *group_entry =
-    riscv_ovl_group_hash_lookup (&htab->ovl_group_table,
-                                 group_id_str, FALSE, FALSE);
-  BFD_ASSERT(group_entry != NULL);
-  bfd_vma offset = group_entry->ovlgrpdata_offset + func_group_info->offset;
 
-  fprintf(stderr, " - Offset of %s is %lx\n", s->name, offset);
+  /* func_group_info holds current group and offset, need to find full offset. */
+  struct ovl_group_list_entry *group_list_entry =
+      ovl_group_list_lookup (&htab->ovl_group_list, func_group_info->id, FALSE);
+  BFD_ASSERT(group_list_entry != NULL);
+
+  bfd_vma offset = group_list_entry->ovlgrpdata_offset + func_group_info->offset;
+
+  if (riscv_comrv_debug)
+    fprintf(stderr, " - Offset of %s is %lx\n", s->name, offset);
+
   return -offset;
 }
 

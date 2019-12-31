@@ -33,8 +33,6 @@
 #include "opcode/riscv.h"
 #include "objalloc.h"
 
-#include <sys/wait.h>
-
 /* Internal relocations used exclusively by the relaxation pass.  */
 #define R_RISCV_DELETE (R_RISCV_max + 1)
 
@@ -2184,59 +2182,55 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	}
       fclose (grouping_tool_file);
 
-
       /* call the grouping tool with the appropriate arguments.  */
-      pid_t grouping_tool_pid;
-      int status;
+      /* NOTE: The documentation for pex_one says that the flags are restricted 
+         to only PEX_SEARCH, PEX_STDERR_TO_STDOUT and PEX_BINARY_OUTPUT, and
+         that the output filename (outname) is interpreted as if PEX_LAST
+         were set. However if this were the case then an output filename of
+         NULL (as below) should cause the output to go to stdout, which it
+         doesn't. In order to get the output to actually go to stdout we must
+         also specify PEX_LAST in the flag field.  */
+      int status, err;
+      const char *errmsg = pex_one (PEX_LAST | PEX_SEARCH,
+                                    grouping_tool_argv[0],
+                                    grouping_tool_argv,
+                                    "grouping tool", NULL, NULL,
+                                    &status, &err);
 
-      grouping_tool_pid = fork();
-      if (grouping_tool_pid == -1)
-        {
-          _bfd_error_handler (_("Failed to spawn grouping tool "
-                                "process"));
-        }
-      else if (grouping_tool_pid == 0)
-        {
-	  /* Initialize grouping tool process.  */
-          if (execve(grouping_tool_argv[0], grouping_tool_argv, NULL) == -1)
-            {
-              _bfd_error_handler (_("Grouping tool child process "
-                                    "failed"));
-              bfd_set_error (bfd_error_bad_value);
-              return FALSE;
-            }
-        }
-      else
-        {
-          /* Wait for the grouping tool to finish.  */
-          while (waitpid(grouping_tool_pid, &status, 0) != grouping_tool_pid)
-            continue;
-
-          /* Populate the tables based on the output from the grouping tool.  */
-          bfd_boolean ret;
+      if (errmsg == NULL)
+	{
+	  /* Populate the tables based on the output from the grouping tool.  */
+	  bfd_boolean ret;
 	  FILE * grouping_tool_out_file =
 	      fopen (grouping_tool_out_filename, FOPEN_RT);
 	  if (!grouping_tool_out_file)
 	    {
 	      _bfd_error_handler (_("Could not open file `%s' to read output "
 	                            "from grouping tool."),
-				  grouping_tool_out_filename);
+	                          grouping_tool_out_filename);
 	      bfd_set_error (bfd_error_bad_value);
 	      return FALSE;
 	    }
 	  ret = riscv_parse_grouping_file (grouping_tool_out_file,
 	                                   &htab->ovl_func_table,
-                                           &htab->ovl_group_table);
-          if (!ret)
-            {
-              _bfd_error_handler (_("Failed to create overlay grouping "
-                                    "table from groupings returned from "
-                                    "grouping tool."));
-              bfd_set_error (bfd_error_bad_value);
-              return FALSE;
-            }
+	                                   &htab->ovl_group_table);
+	  if (!ret)
+	    {
+	      _bfd_error_handler (_("Failed to create overlay grouping "
+	                            "table from groupings returned from "
+	                            "grouping tool."));
+	      bfd_set_error (bfd_error_bad_value);
+	      return FALSE;
+	    }
+	  htab->ovl_tables_populated = TRUE;
 	}
-      htab->ovl_tables_populated = TRUE;
+      else
+	{
+	  _bfd_error_handler (_("Failed to call grouping tool: %s"),
+	                      grouping_tool_argv[0]);
+	  bfd_set_error (bfd_error_bad_value);
+	  return FALSE;
+	}
     }
 
   /* If there are any symbols which weren't grouped by the grouping file

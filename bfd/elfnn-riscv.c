@@ -158,6 +158,9 @@ struct riscv_elf_link_hash_table
   /* The max alignment of output sections.  */
   bfd_vma max_alignment;
 
+  /* Note whether linking overlay-enabled binary.  */
+  bfd_boolean overlay_enabled;
+
   /* Short cut to overlay plt section.  */
   asection *sovlplt;
   /* Offset to the next free overlay plt entry.  */
@@ -1295,6 +1298,7 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	  /* Enable analysis of dynamic sections since the size of the
 	     created sections needs to be calculated later.  */
 	  info->dynamic = 1;
+          htab->overlay_enabled = 1;
 	  {
 	    struct riscv_elf_link_hash_entry *eh =
 		(struct riscv_elf_link_hash_entry *) h;
@@ -1934,14 +1938,13 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
   if (riscv_comrv_debug)
     fprintf(stderr, " * riscv_elf_overlay_preprocess\n");
   struct riscv_elf_link_hash_table *htab;
-  bfd *dynobj;
   asection *s;
   bfd *ibfd;
 
   htab = riscv_elf_hash_table (info);
   BFD_ASSERT (htab != NULL);
-  dynobj = htab->elf.dynobj;
-  BFD_ASSERT (dynobj != NULL);
+  if (htab->elf.dynobj == NULL)
+    return TRUE;
 
   /* FIXME?: Marking the ovlallfns as NOLOAD results in a section with no
      data for copying source functions out at the end of the link, strip the
@@ -4251,98 +4254,103 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 
   /* Fill in all of the overlay PLT entries in turn, based on the
      token value at the start of each entry.  */
-  if (htab->sovlplt)
-    {
-      bfd_vma off, i, token;
-      uint32_t ovlplt_entry[OVLPLT_ENTRY_INSNS];
-
-      for (off = 0; off < htab->next_ovlplt_offset;
-	   off += OVLPLT_ENTRY_SIZE)
-	{
-	  token = bfd_get_32 (output_bfd, htab->sovlplt->contents + off);
-	  if (! riscv_make_ovlplt_entry (token, ovlplt_entry))
-	    return FALSE;
-
-	  for (i = 0; i < OVLPLT_ENTRY_INSNS; i++)
-	    bfd_put_32 (output_bfd, ovlplt_entry[i],
-	                htab->sovlplt->contents + off + 4*i);
-	}
-    }
-
-  /* Fill in all the .ovlgrptbl table entries. */
+  if (htab->overlay_enabled)
   {
-    asection *group_table_sec =
+    if (htab->sovlplt)
+      {
+	bfd_vma off, i, token;
+	uint32_t ovlplt_entry[OVLPLT_ENTRY_INSNS];
+
+	for (off = 0; off < htab->next_ovlplt_offset;
+	     off += OVLPLT_ENTRY_SIZE)
+	  {
+	    token = bfd_get_32 (output_bfd, htab->sovlplt->contents + off);
+	    if (! riscv_make_ovlplt_entry (token, ovlplt_entry))
+	      return FALSE;
+
+	    for (i = 0; i < OVLPLT_ENTRY_INSNS; i++)
+	      bfd_put_32 (output_bfd, ovlplt_entry[i],
+			  htab->sovlplt->contents + off + 4*i);
+	  }
+      }
+
+    /* Fill in all the .ovlgrptbl table entries. */
+    {
+      asection *group_table_sec =
         bfd_get_section_by_name (htab->elf.dynobj, ".ovlinput.__internal.grouptables");
 
-    bfd_vma offset = 0;
-    unsigned group = 0;
-    unsigned max_group = (htab->ovl_group_table_size / 2) - 3;
-    for (group = 0; group <= (max_group + 1); group++)
-      {
-	/* Store current offset.  */
-	uint16_t offset_stored = offset / 512;
-	bfd_put_16 (htab->elf.dynobj, offset_stored,
-	            group_table_sec->contents + group * 2);
-
-	struct ovl_group_list_entry *group_list_entry =
-	    ovl_group_list_lookup (&htab->ovl_group_list, group, FALSE);
-	if (group_list_entry)
-	  offset += group_list_entry->padded_group_size;
-      }
-    /* The last entry in the .ovlgrptbl is a null terminator.  */
-    bfd_put_16 (htab->elf.dynobj, 0,
-               group_table_sec->contents + ((max_group + 2) * 2));
-  }
-
-  unsigned char *current_data;
-  build_current_ovl_section(info, (void*)&current_data);
-  BFD_ASSERT(current_data != NULL);
-  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
-    {
-      asection *isec;
-      for (isec = ibfd->sections; isec != NULL; isec = isec->next)
+      bfd_vma offset = 0;
+      unsigned group = 0;
+      unsigned max_group = (htab->ovl_group_table_size / 2) - 3;
+      for (group = 0; group <= (max_group + 1); group++)
 	{
-	  if (strncmp(isec->name, ".ovlinput.", strlen(".ovlinput.")) == 0)
-	    {
-	      struct ovl_func_hash_entry *sym_groups =
+	  /* Store current offset.  */
+	  uint16_t offset_stored = offset / 512;
+	  bfd_put_16 (htab->elf.dynobj, offset_stored,
+		      group_table_sec->contents + group * 2);
+
+	  struct ovl_group_list_entry *group_list_entry =
+	    ovl_group_list_lookup (&htab->ovl_group_list, group, FALSE);
+	  if (group_list_entry)
+	    offset += group_list_entry->padded_group_size;
+	}
+      /* The last entry in the .ovlgrptbl is a null terminator.  */
+      bfd_put_16 (htab->elf.dynobj, 0,
+		  group_table_sec->contents + ((max_group + 2) * 2));
+    }
+
+    unsigned char *current_data;
+    build_current_ovl_section(info, (void*)&current_data);
+    BFD_ASSERT(current_data != NULL);
+    for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+      {
+	asection *isec;
+	for (isec = ibfd->sections; isec != NULL; isec = isec->next)
+	  {
+	    if (strncmp(isec->name, ".ovlinput.", strlen(".ovlinput.")) == 0)
+	      {
+		struct ovl_func_hash_entry *sym_groups =
 	          ovl_func_hash_lookup (&htab->ovl_func_table,
 	                                isec->name + strlen(".ovlinput."),
 	                                FALSE, FALSE);
-	      if (sym_groups == NULL)
-		continue;
+		if (sym_groups == NULL)
+		  continue;
 
-	      struct ovl_func_group_info *func_group_info;
-	      for (func_group_info = sym_groups->groups->next; func_group_info != NULL;
-	           func_group_info = func_group_info->next)
-		{
-		  char duplicate_func_name[200];
-		  sprintf (duplicate_func_name, ".ovlinput.__internal.duplicate.%lu.%s", func_group_info->id, isec->name + strlen(".ovlinput."));
+		struct ovl_func_group_info *func_group_info;
+		for (func_group_info = sym_groups->groups->next; func_group_info != NULL;
+		     func_group_info = func_group_info->next)
+		  {
+		    char duplicate_func_name[200];
+		    sprintf (duplicate_func_name, ".ovlinput.__internal.duplicate.%lu.%s",
+			     func_group_info->id, isec->name + strlen(".ovlinput."));
 
-		  if (riscv_comrv_debug)
-		    fprintf(stderr, "- Copy of %s in group %lu (%s)\n", isec->name, func_group_info->id, duplicate_func_name);
-		  asection *dup_sec = bfd_get_section_by_name(htab->elf.dynobj, duplicate_func_name);
-		  BFD_ASSERT(dup_sec != NULL);
+		    if (riscv_comrv_debug)
+		      fprintf(stderr, "- Copy of %s in group %lu (%s)\n", isec->name,
+			      func_group_info->id, duplicate_func_name);
+		    asection *dup_sec = bfd_get_section_by_name(htab->elf.dynobj, duplicate_func_name);
+		    BFD_ASSERT(dup_sec != NULL);
 
-		  /* Nasty hack: When the .ovlgrpdata output section is created it
-		     is created with its flags initialized to the same flags as the
-		     last constituent input section. Because the last input section
-		     is a dynamic section, the output section erroneously picks up the
-		     SEC_IN_MEMORY flag which causes bfd_get_section_contents to
-		     fail when it tries to read from the "contents" of .ovlgrpdata.  */
-		  isec->output_section->flags &= ~ SEC_IN_MEMORY;
+		    /* Nasty hack: When the .ovlgrpdata output section is created it
+		       is created with its flags initialized to the same flags as the
+		       last constituent input section. Because the last input section
+		       is a dynamic section, the output section erroneously picks up the
+		       SEC_IN_MEMORY flag which causes bfd_get_section_contents to
+		       fail when it tries to read from the "contents" of .ovlgrpdata.  */
+		    isec->output_section->flags &= ~ SEC_IN_MEMORY;
 
-		  bfd_get_section_contents (output_bfd, isec->output_section,
-		                            dup_sec->contents, isec->output_offset,
-		                            dup_sec->size);
-		}
-	    }
-	}
-    }
-  free(current_data);
+		    bfd_get_section_contents (output_bfd, isec->output_section,
+					      dup_sec->contents, isec->output_offset,
+					      dup_sec->size);
+		  }
+	      }
+	  }
+      }
+    free(current_data);
 
-  /* Now all functions have been copied, calculate and insert the overlay
-     section padding and CRC.  */
-  emit_ovl_padding_and_crc (&htab->ovl_group_list, info);
+    /* Now all functions have been copied, calculate and insert the overlay
+       section padding and CRC.  */
+    emit_ovl_padding_and_crc (&htab->ovl_group_list, info);
+  }
 
   if (htab->elf.sgotplt)
     {
@@ -6144,6 +6152,10 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
     fprintf(stderr, "* do_overlay_stuff_elfNNlriscv\n");
   struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
   BFD_ASSERT (htab != NULL);
+
+  if (!htab->overlay_enabled || htab->elf.dynobj != NULL)
+    return;
+
   const struct elf_backend_data *bed = get_elf_backend_data (htab->elf.dynobj);
 
   riscv_elf_overlay_preprocess (info->output_bfd, info);

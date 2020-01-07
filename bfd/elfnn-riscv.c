@@ -6338,8 +6338,7 @@ riscv_elf_overlay_sort_value (asection *s, struct bfd_link_info *info)
           ovl_group_list_lookup (&htab->ovl_group_list, group_id, FALSE);
       BFD_ASSERT(group_list_entry != NULL);
 
-      bfd_vma padding_offset = group_list_entry->padded_group_size -
-	  group_list_entry->group_size;
+      bfd_vma padding_offset = group_list_entry->group_size;
 
       if (riscv_comrv_debug)
 	fprintf(stderr, " - Offset of %s is %lx\n", s->name,

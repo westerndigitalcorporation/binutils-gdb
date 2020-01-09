@@ -6153,7 +6153,7 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
   struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
   BFD_ASSERT (htab != NULL);
 
-  if (!htab->overlay_enabled || htab->elf.dynobj != NULL)
+  if (!htab->overlay_enabled || htab->elf.dynobj == NULL)
     return;
 
   const struct elf_backend_data *bed = get_elf_backend_data (htab->elf.dynobj);

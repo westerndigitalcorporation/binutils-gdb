@@ -1974,14 +1974,14 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	}
 
       /* Setup the arguments for the grouping tool.  */
-      /* Arguments in riscv_grouping_tool_args are comma separated, so there
+      /* Arguments in riscv_grouping_tool_args are semicolon separated, so there
          will be one more argument than the number of commas.  */
       int n_extra_args = 0;
       if (riscv_grouping_tool_args)
         {
           n_extra_args = 1;
           for (int i = 0; i < (int)strlen (riscv_grouping_tool_args); i++)
-	    if (riscv_grouping_tool_args[i] == ',')
+	    if (riscv_grouping_tool_args[i] == ';')
 	      n_extra_args++;
         }
 
@@ -1994,11 +1994,11 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
       grouping_tool_argv[0] = riscv_grouping_tool;
 
       /* Copy the extra arguments from riscv_group_tools_args, each argument
-         is separated by a ',' */
+         is separated by a ';' */
       const char *arg_start = riscv_grouping_tool_args;
       for (int i = 0; i < n_extra_args; i++)
 	{
-	  const char *arg_end = strchr (arg_start, ',');
+	  const char *arg_end = strchr (arg_start, ';');
 	  int arg_len;
 	  if (arg_end == NULL)
 	    arg_len = strlen (arg_start);

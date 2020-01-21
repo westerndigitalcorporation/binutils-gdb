@@ -42,9 +42,11 @@ riscv_elf_before_allocation (void)
 	  : "";
 
 	/* Produce an error if the input section name starts with ".ovlinput",
-	 and the output name is not ".ovlgrpdata".  */
+	 and the output name is not ".ovlgrpdata". Don't error if marked as exclude,
+	 either by user, or gc-sections.  */
 	if (strncmp (secname, ".ovlinput", strlen(".ovlinput")) == 0 &&
-	    strcmp (dstname, ".ovlgrpdata"))
+	    strcmp (dstname, ".ovlgrpdata") &&
+	    !(sec->flags & SEC_EXCLUDE))
 	  {
 	    fprintf(stderr, "* '%s': '%s' -> '%s'\n", is->filename, secname,
 	            dstname);

@@ -3975,6 +3975,28 @@ check_input_sections
     }
 }
 
+/* Set lang statement sorting to by_user1 for custom defaults.  */
+
+static void
+set_user1_sort_default (lang_statement_union_type *s)
+{
+  struct wildcard_list *sec;
+
+  for (; s != NULL; s = s->header.next)
+    {
+      switch (s->header.type)
+	{
+	default: break;
+	case lang_wild_statement_enum:
+	  for (sec = s->wild_statement.section_list; sec != NULL;
+	       sec = sec->next)
+	    {
+	      sec->spec.sorted = by_user;
+	    }
+	}
+    }
+}
+
 /* Update wildcard statements if needed.  */
 
 static void
@@ -3988,6 +4010,19 @@ update_wild_statements (lang_statement_union_type *s)
       FAIL ();
 
     case none:
+      /* In the case of no user provided default, set the .ovlgrpdata
+	 output section to always use by_user1 sorting. */
+      for (; s != NULL; s = s->header.next)
+	{
+	  switch (s->header.type)
+	    {
+	    default: break;
+	    case lang_output_section_statement_enum:
+	      if (strcmp (s->output_section_statement.name, ".ovlgrpdata") == 0)
+		set_user1_sort_default (s->output_section_statement.children.head);
+	      break;
+	    }
+	}
       break;
 
     case by_name:

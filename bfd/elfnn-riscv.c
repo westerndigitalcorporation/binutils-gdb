@@ -1202,6 +1202,36 @@ riscv_elf_record_got_reference (bfd *abfd, struct bfd_link_info *info,
   return TRUE;
 }
 
+/* Look at all sections in ABFD and enable overlay support if any contain
+   overlay functions/data.  */
+static bfd_boolean
+riscv_elf_check_sections (bfd *abfd, struct bfd_link_info *info)
+{
+  struct riscv_elf_link_hash_table *htab;
+  asection *sec;
+
+  if (bfd_link_relocatable (info))
+    return TRUE;
+
+  htab = riscv_elf_hash_table (info);
+
+  if (htab->elf.dynobj == NULL)
+    htab->elf.dynobj = abfd;
+
+  for (sec = abfd->sections; sec != NULL; sec = sec->next)
+    {
+      /* If this is an overlay input section, flag the link as being overlay
+         enabled. */
+      if (strncmp(sec->name, ".ovlinput.", strlen(".ovlinput.")) == 0)
+        {
+          info->dynamic = 1;
+          htab->overlay_enabled = 1;
+        }
+    }
+
+  return TRUE;
+}
+
 static bfd_boolean
 bad_static_reloc (bfd *abfd, unsigned r_type, struct elf_link_hash_entry *h)
 {
@@ -2167,16 +2197,8 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
      their own.  */
   for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
     {
-      unsigned int i, symcount;
-      Elf_Internal_Shdr *symtab_hdr;
-      struct elf_link_hash_entry **sym_hashes = elf_sym_hashes (ibfd);
-
       if (! is_riscv_elf (ibfd))
 	continue;
-
-      symtab_hdr = &elf_symtab_hdr (ibfd);
-      symcount = ((symtab_hdr->sh_size / sizeof (ElfNN_External_Sym))
-                 - symtab_hdr->sh_info);
 
       unsigned next_empty_group;
       if (riscv_ovl_first_group_number != 0)
@@ -2184,26 +2206,11 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
       else
 	next_empty_group = OVL_FIRST_FREE_GROUP;
 
-      for (i = 0; i < symcount; i++)
+    for (asection *sec = ibfd->sections; sec != NULL; sec = sec->next)
 	{
-	  struct riscv_elf_link_hash_entry *eh =
-	      (struct riscv_elf_link_hash_entry *)sym_hashes[i];
-	  asection *sec = eh->elf.root.u.def.section;
-
-	  if (!eh->needs_overlay_group)
+	  if (strncmp (sec->name, ".ovlinput.", strlen(".ovlinput.")) != 0)
 	    continue;
 
-	  /* Skip this symbols if it's not a definition. This avoids
-	     accidentally assigning the same symbol more than once. */
-	  if (eh->elf.root.type != bfd_link_hash_defined
-	      && eh->elf.root.type != bfd_link_hash_defweak)
-	    continue;
-
-	  /* A symbol which needs an overlay group will be in a section with
-	     a name of the format .ovlinput.<symbol name>.  */
-	  if (strncmp (sec->name, ".ovlinput.",
-	               strlen(".ovlinput.")) != 0)
-	    continue;  /* FIXME: This should be an error.  */
 	  const char *sym_name = sec->name + strlen(".ovlinput.");
 
 	  /* Skip the symbol if it's already been assigned a group - either
@@ -6444,6 +6451,7 @@ riscv_elf_overlay_sort_value (asection *s, struct bfd_link_info *info)
 #define elf_backend_copy_indirect_symbol     riscv_elf_copy_indirect_symbol
 #define elf_backend_create_dynamic_sections  riscv_elf_create_dynamic_sections
 #define elf_backend_check_relocs	     riscv_elf_check_relocs
+#define elf_backend_check_directives         riscv_elf_check_sections
 #define elf_backend_adjust_dynamic_symbol    riscv_elf_adjust_dynamic_symbol
 #define elf_backend_size_dynamic_sections    riscv_elf_size_dynamic_sections
 #define elf_backend_relocate_section	     riscv_elf_relocate_section

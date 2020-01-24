@@ -2405,27 +2405,6 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 		  bfd_set_error (bfd_error_bad_value);
 		  return FALSE;
 		}
-
-	      if (group_list_entry->group_size == 0)
-		group_list_entry->first_func = sym_name;
-	      group_list_entry->last_func = sym_name;
-
-	      /* Allocate space in the output group for the contents of the
-	         input section corresponding to the symbol, and re-pad to a
-		 4-byte boundary to allow offsets to remain valid.  */
-	      group_list_entry->group_size += sec->size;
-	      if ((group_list_entry->group_size % 4) != 0)
-		group_list_entry->group_size += (group_list_entry->group_size % 4);
-
-	      if (group_list_entry->group_size + OVL_CRC_SZ
-		  > OVL_MAXGROUPSIZE)
-		{
-		  _bfd_error_handler (_
-		    ("%pB: error: Overlay group %d exceeds maximum group size"),
-		     output_bfd, (int)func_group_info->id);
-		  bfd_set_error (bfd_error_bad_value);
-		  return FALSE;
-		}
 	    }
 	}
     }

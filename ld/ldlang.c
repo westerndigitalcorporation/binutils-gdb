@@ -4010,7 +4010,7 @@ update_wild_statements (lang_statement_union_type *s)
       FAIL ();
 
     case none:
-      /* In the case of no user provided default, set the .ovlgrpdata
+      /* In the case of no user provided default, set the .ovlgrps
 	 output section to always use by_user1 sorting. */
       for (; s != NULL; s = s->header.next)
 	{
@@ -4018,7 +4018,7 @@ update_wild_statements (lang_statement_union_type *s)
 	    {
 	    default: break;
 	    case lang_output_section_statement_enum:
-	      if (strcmp (s->output_section_statement.name, ".ovlgrpdata") == 0)
+	      if (strcmp (s->output_section_statement.name, ".ovlgrps") == 0)
 		set_user1_sort_default (s->output_section_statement.children.head);
 	      break;
 	    }

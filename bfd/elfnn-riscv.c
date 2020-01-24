@@ -129,7 +129,7 @@ struct ovl_group_list_entry
   const char **functions;
 
   /* Size of the groups contents, size of it when padded, and the offset
-     to the start of the group in the .ovlgrpdata output section.  */
+     to the start of the group in the .ovlgrps output section.  */
   bfd_vma group_size;
   bfd_vma padded_group_size;
   bfd_vma ovlgrpdata_offset;
@@ -780,15 +780,15 @@ static bfd_boolean
 build_current_ovl_section (struct bfd_link_info *info, void **data)
 {
   bfd *output_bfd = info->output_bfd;
-  asection *sec = bfd_get_section_by_name (output_bfd, ".ovlgrpdata");
+  asection *sec = bfd_get_section_by_name (output_bfd, ".ovlgrps");
   BFD_ASSERT (sec != NULL);
 
-  /* Nasty hack: When the .ovlgrpdata output section is created it
+  /* Nasty hack: When the .ovlgrps output section is created it
      is created with its flags initialized to the same flags as the
      last constituent input section. Because the last input section
      is a dynamic section, the output section erroneously picks up the
      SEC_IN_MEMORY flag which causes bfd_get_section_contents to
-     fail when it tries to read from the "contents" of .ovlgrpdata.  */
+     fail when it tries to read from the "contents" of .ovlgrps.  */
   sec->flags &= ~SEC_IN_MEMORY;
 
   void *section_data = malloc(sec->size);
@@ -2430,7 +2430,7 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 
   /* Now that the size of the groups is fixed calculated the padded size
      of each group, finalize the offset of each group, and calculate the
-     total size needed in ".ovlgrpdata".  */
+     total size needed in ".ovlgrps".  */
   unsigned int i;
   bfd_vma next_group_offset = 0;
   for (i = 0; i <= ovl_max_group; i++)
@@ -4340,12 +4340,12 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 		    asection *dup_sec = bfd_get_section_by_name(htab->elf.dynobj, duplicate_func_name);
 		    BFD_ASSERT(dup_sec != NULL);
 
-		    /* Nasty hack: When the .ovlgrpdata output section is created it
+		    /* Nasty hack: When the .ovlgrps output section is created it
 		       is created with its flags initialized to the same flags as the
 		       last constituent input section. Because the last input section
 		       is a dynamic section, the output section erroneously picks up the
 		       SEC_IN_MEMORY flag which causes bfd_get_section_contents to
-		       fail when it tries to read from the "contents" of .ovlgrpdata.  */
+		       fail when it tries to read from the "contents" of .ovlgrps.  */
 		    isec->output_section->flags &= ~ SEC_IN_MEMORY;
 
 		    bfd_get_section_contents (output_bfd, isec->output_section,

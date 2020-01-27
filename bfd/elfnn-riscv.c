@@ -2397,9 +2397,9 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	      if (group_list_entry->group_size + OVL_CRC_SZ
 		  > OVL_MAXGROUPSIZE)
 		{
-		  _bfd_error_handler (_
-		    ("%pB: error: Overlay group %d exceeds maximum group size"),
-		     output_bfd, (int)func_group_info->id);
+		  info->callbacks->einfo
+		    (_("%F%pB: error: Overlay group %d exceeds maximum group size\n"),
+		      output_bfd, (int)func_group_info->id);
 		  bfd_set_error (bfd_error_bad_value);
 		  return FALSE;
 		}

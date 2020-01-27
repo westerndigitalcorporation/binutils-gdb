@@ -1968,21 +1968,12 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
   if (riscv_comrv_debug)
     fprintf(stderr, " * riscv_elf_overlay_preprocess\n");
   struct riscv_elf_link_hash_table *htab;
-  asection *s;
   bfd *ibfd;
 
   htab = riscv_elf_hash_table (info);
   BFD_ASSERT (htab != NULL);
   if (htab->elf.dynobj == NULL)
     return TRUE;
-
-  /* FIXME?: Marking the ovlallfns as NOLOAD results in a section with no
-     data for copying source functions out at the end of the link, strip the
-     alloc bit from this section manually here, so that the data still lives
-     in the final ELF file, and we can access it in FINISH_DYNAMIC_SECTIONS.  */
-  s = bfd_get_section_by_name(info->output_bfd, ".ovlallfns");
-  if (s != NULL)
-  s->flags &= ~SEC_ALLOC;
 
   /* Allocate space for the overlay PLT table based on it's size
      (determined when checking the relocs).  */

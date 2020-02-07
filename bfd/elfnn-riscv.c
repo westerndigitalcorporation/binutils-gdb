@@ -4274,37 +4274,6 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
       /* The last entry in the .ovlgrptbl is a null terminator.  */
       bfd_put_16 (htab->elf.dynobj, 0,
 		  group_table_sec->contents + ((max_group + 2) * 2));
-
-      /* Add symbols for the start of the group table, and a symbol
-         for the start of the multigroup table (which will be populated
-         later).  */
-      bfd_boolean res;
-      struct bfd_link_hash_entry *bfdh;
-      struct elf_link_hash_entry *elfh;
-
-      bfdh = NULL;
-      res = _bfd_generic_link_add_one_symbol (info, group_table_sec->owner,
-                                              "__OVERLAY_GROUP_TABLE_START",
-                                              BSF_GLOBAL, group_table_sec,
-                                              0, NULL, TRUE, FALSE, &bfdh);
-      if (!res)
-	return res;
-      /* Set ELF flags */
-      elfh = (struct elf_link_hash_entry *)bfdh;
-      elfh->type = ELF_ST_INFO (STB_GLOBAL, STT_OBJECT);
-      elfh->size = htab->ovl_group_table_size;
-
-      bfdh = NULL;
-      res = _bfd_generic_link_add_one_symbol (info, group_table_sec->owner,
-                                              "__OVERLAY_MULTIGROUP_TABLE_START",
-                                              BSF_GLOBAL, group_table_sec,
-                                              htab->ovl_group_table_size,
-                                              NULL, TRUE, FALSE, &bfdh);
-      if (!res)
-	return res;
-      elfh = (struct elf_link_hash_entry *)bfdh;
-      elfh->type = ELF_ST_INFO (STB_GLOBAL, STT_OBJECT);
-      elfh->size = htab->ovl_multigroup_table_size;
     }
 
     unsigned char *current_data;
@@ -6182,6 +6151,35 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
     BFD_ASSERT(s != NULL);
     s->contents = (unsigned char *)bfd_zalloc (htab->elf.dynobj, size);
     s->size = size;
+
+    /* Add symbols for the start of the group table, and a symbol
+       for the start of the multigroup table (which will be populated
+       later).  */
+    bfd_boolean res;
+    struct bfd_link_hash_entry *bfdh;
+    struct elf_link_hash_entry *elfh;
+
+    bfdh = NULL;
+    res = _bfd_generic_link_add_one_symbol (info, htab->elf.dynobj,
+					    "__OVERLAY_GROUP_TABLE_START",
+					    BSF_GLOBAL, s,
+					    0, NULL, TRUE, FALSE, &bfdh);
+    BFD_ASSERT(res != FALSE);
+    /* Set ELF flags */
+    elfh = (struct elf_link_hash_entry *)bfdh;
+    elfh->type = ELF_ST_INFO (STB_GLOBAL, STT_OBJECT);
+    elfh->size = htab->ovl_group_table_size;
+
+    bfdh = NULL;
+    res = _bfd_generic_link_add_one_symbol (info, htab->elf.dynobj,
+					    "__OVERLAY_MULTIGROUP_TABLE_START",
+					    BSF_GLOBAL, s,
+					    htab->ovl_group_table_size,
+					    NULL, TRUE, FALSE, &bfdh);
+    BFD_ASSERT(res != FALSE);
+    elfh = (struct elf_link_hash_entry *)bfdh;
+    elfh->type = ELF_ST_INFO (STB_GLOBAL, STT_OBJECT);
+    elfh->size = htab->ovl_multigroup_table_size;
   }
 
   /* Create duplicate sections for functions in multigroups.  */

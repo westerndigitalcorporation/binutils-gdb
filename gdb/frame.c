@@ -43,6 +43,7 @@
 #include "hashtab.h"
 #include "valprint.h"
 #include "cli/cli-option.h"
+#include "overlay.h"
 
 /* The sentinel frame terminates the innermost end of the frame chain.
    If unwound, it returns the information needed to construct an
@@ -2417,6 +2418,8 @@ get_frame_pc_if_available (struct frame_info *frame, CORE_ADDR *pc)
 	throw;
     }
 
+  (*pc) = overlay_manager_non_overlay_address (*pc);
+
   return 1;
 }
 
@@ -2427,6 +2430,8 @@ get_frame_address_in_block (struct frame_info *this_frame)
 {
   /* A draft address.  */
   CORE_ADDR pc = get_frame_pc (this_frame);
+
+  pc = overlay_manager_non_overlay_address (pc);
 
   struct frame_info *next_frame = this_frame->next;
 

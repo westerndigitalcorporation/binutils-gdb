@@ -110,4 +110,15 @@ extern bool overlay_manager_is_overlay_breakpoint_loc (struct bp_location *bl);
 
 extern std::vector<CORE_ADDR> overlay_manager_get_mapped_addresses (CORE_ADDR addr);
 
+/* If ADDR is an address that was mapped in from an overlay source region,
+   then return the corresponding address in the overlay source region,
+   otherwise, return ADDR.  */
+
+extern CORE_ADDR overlay_manager_non_overlay_address (CORE_ADDR addr);
+
+/* If ADDR is currently mapped in, then return the first mapped address,
+   otherwise return ADDR.  */
+
+extern CORE_ADDR overlay_manager_get_mapped_address_if_possible (CORE_ADDR addr);
+
 #endif /* !defined OVERLAY_H */

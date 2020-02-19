@@ -174,6 +174,43 @@ overlay_manager_is_overlay_breakpoint_loc (struct bp_location *bl)
 
 }
 
+/* See overlay.h.  */
+
+CORE_ADDR
+overlay_manager_non_overlay_address (CORE_ADDR addr)
+{
+  /* Is ADDR with the region into which we map overlays?
+     TODO: Need a real check for this, but for now, using this hack.  */
+  if (addr >= 0x80000c00
+      && addr < (0x80000c00 + 0x400)
+      /* Can only reverse overlay mapping, if we actually have any overlay
+         mappings.  */
+      && curr_mappings != nullptr)
+    {
+      /* Figure out what address this would have been before it was mapped
+         in.  */
+      for (const auto &m : *curr_mappings)
+        {
+          if (addr >= m.dst && addr < (m.dst + m.len))
+            return m.src + (addr - m.dst);
+        }
+    }
+
+  return addr;
+}
+
+/* See overlay.h.  */
+
+CORE_ADDR
+overlay_manager_get_mapped_address_if_possible (CORE_ADDR addr)
+{
+  std::vector<CORE_ADDR> addrs
+    = overlay_manager_get_mapped_addresses (addr);
+  if (addrs.size () > 0)
+    return addrs[0];
+  return addr;
+}
+
 void
 _initialize_overlay (void)
 {

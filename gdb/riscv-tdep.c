@@ -57,6 +57,7 @@
 #include "prologue-value.h"
 #include "arch/riscv.h"
 #include "riscv-ravenscar-thread.h"
+#include "overlay.h"
 
 /* The stack must be 16-byte aligned.  */
 #define SP_ALIGNMENT 16
@@ -3018,6 +3019,35 @@ riscv_add_reggroups (struct gdbarch *gdbarch)
   reggroup_add (gdbarch, csr_reggroup);
 }
 
+#if 0
+/* Read the pc register from REGCACHE.  This performs a reverse overlay
+   mapping where needed.  This was an attempt to try and "trick" GDB into
+   only ever existing in the overlay source region.
+
+   This doesn't work (currently) though due to the way that breakpoints
+   modify their address field, when we try to continue GDB looks to see
+   which breakpoints are at the current $pc, however the $pc now points at
+   the overlay source region, while the breakpoint address is in the
+   overlay destination region.  GDB fails to remove the breakpoint.
+
+   It might be an interesting approach to see if we could/should stick
+   with this, and leave the breakpoint address unchanged, but just insert
+   it at the destination address.  */
+
+static CORE_ADDR
+riscv_read_pc (readable_regcache *regcache)
+{
+  ULONGEST tmp;
+  CORE_ADDR pc;
+
+  regcache->cooked_read (gdbarch_pc_regnum (regcache->arch ()), &tmp);
+  pc = (CORE_ADDR) tmp;
+  pc = overlay_manager_non_overlay_address (pc);
+
+  return pc;
+}
+#endif
+
 /* Create register aliases for all the alternative names that exist for
    registers in REG_SET.  */
 
@@ -3319,6 +3349,10 @@ riscv_gdbarch_init (struct gdbarch_info info,
   /* Some specific register numbers GDB likes to know about.  */
   set_gdbarch_sp_regnum (gdbarch, RISCV_SP_REGNUM);
   set_gdbarch_pc_regnum (gdbarch, RISCV_PC_REGNUM);
+#if 0
+  /* See comments on RISCV_READ_PC.  */
+  set_gdbarch_read_pc (gdbarch, riscv_read_pc);
+#endif
 
   set_gdbarch_print_registers_info (gdbarch, riscv_print_registers_info);
 

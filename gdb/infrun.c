@@ -66,6 +66,7 @@
 #include "gdbsupport/forward-scope-exit.h"
 #include "gdb_select.h"
 #include <unordered_map>
+#include "overlay.h"
 
 /* Prototypes for local functions */
 
@@ -6714,7 +6715,13 @@ process_event_stop_test (struct execution_control_state *ecs)
 	  && execution_direction == EXEC_REVERSE)
 	end_stepping_range (ecs);
       else
-	keep_going (ecs);
+        {
+          if (debug_infrun)
+            fprintf_unfiltered
+              (gdb_stdlog, "infrun: keep going on line %d\n",
+               __LINE__);
+          keep_going (ecs);
+        }
 
       return;
     }
@@ -6757,6 +6764,10 @@ process_event_stop_test (struct execution_control_state *ecs)
 						sr_sal, null_frame_id);
 	}
 
+      if (debug_infrun)
+        fprintf_unfiltered
+          (gdb_stdlog, "infrun: keep going on line %d\n",
+           __LINE__);
       keep_going (ecs);
       return;
     }
@@ -6769,6 +6780,10 @@ process_event_stop_test (struct execution_control_state *ecs)
       if (debug_infrun)
 	 fprintf_unfiltered (gdb_stdlog,
 			     "infrun: stepped into indirect branch thunk\n");
+      if (debug_infrun)
+        fprintf_unfiltered
+          (gdb_stdlog, "infrun: keep going on line %d\n",
+           __LINE__);
       keep_going (ecs);
       return;
     }
@@ -6786,6 +6801,10 @@ process_event_stop_test (struct execution_control_state *ecs)
          the signal handler returning).  Just single-step until the
          inferior leaves the trampoline (either by calling the handler
          or returning).  */
+      if (debug_infrun)
+        fprintf_unfiltered
+          (gdb_stdlog, "infrun: keep going on line %d\n",
+           __LINE__);
       keep_going (ecs);
       return;
     }
@@ -6826,6 +6845,10 @@ process_event_stop_test (struct execution_control_state *ecs)
 
 	  /* Restart without fiddling with the step ranges or
 	     other state.  */
+          if (debug_infrun)
+            fprintf_unfiltered
+              (gdb_stdlog, "infrun: keep going on line %d\n",
+               __LINE__);
 	  keep_going (ecs);
 	  return;
 	}
@@ -6886,6 +6909,10 @@ process_event_stop_test (struct execution_control_state *ecs)
 	     executed the solib function (backwards), and a few 
 	     steps will take us back through the trampoline to the
 	     caller.  */
+          if (debug_infrun)
+            fprintf_unfiltered
+              (gdb_stdlog, "infrun: keep going on line %d\n",
+               __LINE__);
 	  keep_going (ecs);
 	  return;
 	}
@@ -6923,6 +6950,10 @@ process_event_stop_test (struct execution_control_state *ecs)
 	  else
 	    insert_step_resume_breakpoint_at_caller (frame);
 
+          if (debug_infrun)
+            fprintf_unfiltered
+              (gdb_stdlog, "infrun: keep going on line %d\n",
+               __LINE__);
 	  keep_going (ecs);
 	  return;
 	}
@@ -6946,6 +6977,10 @@ process_event_stop_test (struct execution_control_state *ecs)
 
 	  insert_step_resume_breakpoint_at_sal (gdbarch,
 						sr_sal, null_frame_id);
+          if (debug_infrun)
+            fprintf_unfiltered
+              (gdb_stdlog, "infrun: keep going on line %d\n",
+               __LINE__);
 	  keep_going (ecs);
 	  return;
 	}
@@ -7007,6 +7042,10 @@ process_event_stop_test (struct execution_control_state *ecs)
 	   at which the caller will resume).  */
 	insert_step_resume_breakpoint_at_caller (frame);
 
+      if (debug_infrun)
+        fprintf_unfiltered
+          (gdb_stdlog, "infrun: keep going on line %d\n",
+           __LINE__);
       keep_going (ecs);
       return;
     }
@@ -7027,6 +7066,10 @@ process_event_stop_test (struct execution_control_state *ecs)
 	     executed the solib function (backwards), and a few 
 	     steps will take us back through the trampoline to the
 	     caller.  */
+          if (debug_infrun)
+            fprintf_unfiltered
+              (gdb_stdlog, "infrun: keep going on line %d\n",
+               __LINE__);
 	  keep_going (ecs);
 	  return;
 	}
@@ -7040,6 +7083,10 @@ process_event_stop_test (struct execution_control_state *ecs)
 	  sr_sal.pspace = get_frame_program_space (frame);
 	  insert_step_resume_breakpoint_at_sal (gdbarch, 
 						sr_sal, null_frame_id);
+          if (debug_infrun)
+            fprintf_unfiltered
+              (gdb_stdlog, "infrun: keep going on line %d\n",
+               __LINE__);
 	  keep_going (ecs);
 	  return;
 	}
@@ -7084,6 +7131,10 @@ process_event_stop_test (struct execution_control_state *ecs)
 	  /* Set a breakpoint at callee's return address (the address
 	     at which the caller will resume).  */
 	  insert_step_resume_breakpoint_at_caller (frame);
+          if (debug_infrun)
+            fprintf_unfiltered
+              (gdb_stdlog, "infrun: keep going on line %d\n",
+               __LINE__);
 	  keep_going (ecs);
 	  return;
 	}
@@ -7153,7 +7204,13 @@ process_event_stop_test (struct execution_control_state *ecs)
 	     inlined function.  */
 	  if (call_sal.line == ecs->event_thread->current_line
 	      && call_sal.symtab == ecs->event_thread->current_symtab)
-	    keep_going (ecs);
+            {
+              if (debug_infrun)
+                fprintf_unfiltered
+                  (gdb_stdlog, "infrun: keep going on line %d\n",
+                   __LINE__);
+              keep_going (ecs);
+            }
 	  else
 	    end_stepping_range (ecs);
 	  return;
@@ -7177,14 +7234,22 @@ process_event_stop_test (struct execution_control_state *ecs)
 
       if (ecs->event_thread->control.step_over_calls == STEP_OVER_ALL
 	  || inline_frame_is_marked_for_skip (false, ecs->event_thread))
-	keep_going (ecs);
+        {
+          if (debug_infrun)
+            fprintf_unfiltered
+              (gdb_stdlog, "infrun: keep going on line %d\n",
+               __LINE__);
+          keep_going (ecs);
+        }
       else
 	end_stepping_range (ecs);
       return;
     }
 
   bool refresh_step_info = true;
-  if ((ecs->event_thread->suspend.stop_pc == stop_pc_sal.pc)
+  CORE_ADDR stop_pc = ecs->event_thread->suspend.stop_pc;
+  stop_pc = overlay_manager_non_overlay_address (stop_pc);
+  if ((stop_pc == stop_pc_sal.pc)
       && (ecs->event_thread->current_line != stop_pc_sal.line
  	  || ecs->event_thread->current_symtab != stop_pc_sal.symtab))
     {
@@ -7237,6 +7302,10 @@ process_event_stop_test (struct execution_control_state *ecs)
 
   if (debug_infrun)
      fprintf_unfiltered (gdb_stdlog, "infrun: keep going\n");
+  if (debug_infrun)
+    fprintf_unfiltered
+      (gdb_stdlog, "infrun: keep going on line %d\n",
+       __LINE__);
   keep_going (ecs);
 }
 

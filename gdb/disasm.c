@@ -32,6 +32,7 @@
 #include "gdbsupport/gdb_optional.h"
 #include "valprint.h"
 #include "cli/cli-style.h"
+#include "overlay.h"
 
 /* Disassemble functions.
    FIXME: We should get rid of all the duplicate code in gdb that does
@@ -258,6 +259,7 @@ gdb_pretty_print_disassembler::pretty_print_insn (const struct disasm_insn *insn
 
     m_insn_stb.clear ();
 
+    pc = overlay_manager_get_mapped_address_if_possible (pc);
     if (flags & DISASSEMBLY_RAW_INSN)
       {
 	CORE_ADDR end_pc;
@@ -273,7 +275,7 @@ gdb_pretty_print_disassembler::pretty_print_insn (const struct disasm_insn *insn
 
 	for (;pc < end_pc; ++pc)
 	  {
-	    read_code (pc, &data, 1);
+   	    read_code (pc, &data, 1);
 	    m_opcode_stb.printf ("%s%02x", spacer, (unsigned) data);
 	    spacer = " ";
 	  }

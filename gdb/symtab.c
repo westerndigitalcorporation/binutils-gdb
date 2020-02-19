@@ -60,6 +60,7 @@
 #include "solist.h"
 #include "macrotab.h"
 #include "macroscope.h"
+#include "overlay.h"
 
 #include "parser-defs.h"
 #include "completer.h"
@@ -3049,6 +3050,8 @@ find_pc_sect_line (CORE_ADDR pc, struct obj_section *section, int notcurrent)
   struct linetable_entry *item;
   const struct blockvector *bv;
   struct bound_minimal_symbol msymbol;
+
+  pc = overlay_manager_non_overlay_address (pc);
 
   /* Info on best line seen so far, and where it starts, and its file.  */
 

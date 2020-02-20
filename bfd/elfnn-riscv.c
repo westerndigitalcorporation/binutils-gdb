@@ -2752,7 +2752,13 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
   struct ovl_func_hash_entry *func_groups =
       ovl_func_hash_lookup(&htab->ovl_func_table, entry->root.root.string,
                            FALSE, FALSE);
-  BFD_ASSERT (func_groups != NULL);
+  if (func_groups == NULL)
+    {
+      (*_bfd_error_handler)
+	(_("error: %pB: No overlay groups for function `%s', cannot materialize overlay "
+	   "token"), info->output_bfd, entry->root.root.string);
+      return 0;
+    }
 
   if (func_groups->multigroup == FALSE)
     {

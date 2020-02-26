@@ -2956,6 +2956,10 @@ int overlay_cache_invalid = 0;	/* True if need to refresh mapped state.  */
 int
 section_is_overlay (struct obj_section *section)
 {
+#if 0
+  /* This logic needs to move into the overlay manager, as this depends on
+     the type of overlay system that we have in use.  */
+
   if (overlay_debugging && section)
     {
       asection *bfd_section = section->the_bfd_section;
@@ -2964,6 +2968,7 @@ section_is_overlay (struct obj_section *section)
 	  && bfd_section_lma (bfd_section) != bfd_section_vma (bfd_section))
 	return 1;
     }
+#endif
 
   return 0;
 }

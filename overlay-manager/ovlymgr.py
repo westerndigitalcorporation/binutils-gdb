@@ -2,7 +2,8 @@ import gdb
 import re
 
 INIT_SYMBOL = "g_stComrvCB.ucTablesLoaded"
-OVERLAY_STORAGE_SYMBOL = "OVERLAY_START_OF_OVERLAYS"
+OVERLAY_STORAGE_START_SYMBOL = "OVERLAY_START_OF_OVERLAYS"
+OVERLAY_STORAGE_END_SYMBOL = "OVERLAY_END_OF_OVERLAYS"
 OVERLAY_CACHE_START_SYMBOL = "__OVERLAY_CACHE_START__"
 OVERLAY_CACHE_END_SYMBOL = "__OVERLAY_CACHE_END__"
 OVERLAY_MIN_CACHE_ENTRY_SIZE_IN_BYTES = 512
@@ -18,6 +19,7 @@ class overlay_cache_data:
     __instance = None
     __mem_re = None
 
+    # Holds information about all the groups and multi-groups.
     class __overlay_group_data:
         def __init__ (self, groups, multi_groups):
             self.__groups = groups
@@ -26,6 +28,7 @@ class overlay_cache_data:
         def get_group (self, index):
             return self.__groups[index]
 
+    # Holds information about a single group.
     class __overlay_group:
         def __init__ (self, base_address, size_in_bytes):
             self.__base_address = base_address
@@ -138,7 +141,6 @@ class overlay_cache_data:
         groups = list ()
         multi_groups = list ()
 
-
         # Read all of the overlay group offsets from memory, adding
         # entries to the overlay group list as we go.
         table_end = table_start + table_size
@@ -199,10 +201,10 @@ class overlay_cache_data:
         # symbol.  Read these and create a cache descriptor object.
         cache_start = overlay_cache_data.\
                       __read_symbol_address_as_integer \
-                      		(OVERLAY_CACHE_START_SYMBOL)
+				(OVERLAY_CACHE_START_SYMBOL)
         cache_end = overlay_cache_data.\
                     __read_symbol_address_as_integer \
-                    		(OVERLAY_CACHE_END_SYMBOL)
+				(OVERLAY_CACHE_END_SYMBOL)
         cache_desc = overlay_cache_data.__cache_descriptor (cache_start,
                                                             cache_end)
 
@@ -211,7 +213,10 @@ class overlay_cache_data:
         # to find their storage base address.
         storage_start = overlay_cache_data.\
                         __read_symbol_address_as_integer \
-                        	(OVERLAY_STORAGE_SYMBOL)
+				(OVERLAY_STORAGE_START_SYMBOL)
+        storage_end = overlay_cache_data.\
+                        __read_symbol_address_as_integer \
+				(OVERLAY_STORAGE_END_SYMBOL)
         groups_data = overlay_cache_data.\
                       __load_group_data (cache_desc.tables_base_address (),
                                          cache_desc.tables_size_in_bytes (),
@@ -363,8 +368,7 @@ class MyOverlayManager (gdb.OverlayManager):
 
             def visit_mapped_overlay (self, src_addr, dst_addr, length,
                                       cache_index, group_number):
-                super (MyOverlayManager, self.__manager).\
-                    add_mapping (src_addr, dst_addr, length)
+                self.__manager.add_mapping (src_addr, dst_addr, length)
                 return True
 
         # Create an instance of the previous class, this does all the work in

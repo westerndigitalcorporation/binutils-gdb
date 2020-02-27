@@ -2539,7 +2539,7 @@ insert_overlay_breakpoint_loc (struct bp_location *bl,
 {
   /* Find the original, non-mapped address for this overlay.  */
   CORE_ADDR addr = bl->address;
-  if ((bl->address & 0xf0000000) != 0xe0000000)
+  if (!overlay_manager_is_unmapped_overlay_address  (bl->address))
     addr = bl->overlay_target_info.placed_address;
 
   if (debug_overlay)
@@ -2570,7 +2570,7 @@ insert_overlay_breakpoint_loc (struct bp_location *bl,
          has now been removed.  In this case we need to mark the breakpoint
          as removed, and reset its address field.  For now we just spot
          this case and issue an error.  */
-      if ((bl->address & 0xf0000000) != 0xe0000000)
+      if (!overlay_manager_is_unmapped_overlay_address  (bl->address))
         error (_("breakpoint is inserted, but no longer mapped"));
 
       /* This breakpoint is not mapped in, and is not currently inserted,
@@ -2585,7 +2585,7 @@ insert_overlay_breakpoint_loc (struct bp_location *bl,
      which the breakpoint was inserted, so we absolutely have to update
      this field.  */
 
-  if ((bl->address & 0xf0000000) != 0xe0000000)
+  if (!overlay_manager_is_unmapped_overlay_address  (bl->address))
     {
       /* The field has already been updated, but maybe the mapping for this
          breakpoint has changed.  For now we don't handle this case, but

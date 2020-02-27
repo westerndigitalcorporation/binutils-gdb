@@ -143,26 +143,29 @@ overlay_manager_get_mapped_addresses (CORE_ADDR addr)
 bool
 overlay_manager_is_overlay_breakpoint_loc (struct bp_location *bl)
 {
+  CORE_ADDR start, end;
+
   if (bl->loc_type == bp_loc_software_breakpoint
       || bl->loc_type == bp_loc_hardware_breakpoint)
     {
-      /* TODO: We should be asking the overlay manager instance whether
-         this is an overlay breakpoint or not.  This address absolutely
-         should not be hard coded into GDB.
+      /* Figure out if this is an overlay breakpoint.  For now this is done
+         by assuming all breakpoints within either the overlay cache region,
+         or the overlay storage region are overlay breakpoints.
 
-         Also, I'm unsure about the use of requested_address here.  There
-         are probably multiple things that can adjust the address from the
-         requested_address to address, then when we map in the overlay
-         breakpoint we figure out the address it is mapped into and place
-         that into 'address'.  */
-      if ((bl->address & 0xf0000000ull) == 0xe0000000)
-        return true;
+         We need to check both addresses as breakpoints update their
+         address as they are mapped in and out.
 
-      /* TODO: This is obviously a hack for now.  We need a rock solid way
-         of identifying if the breakpoint is an overlay breakpoint or not.
-         Clearly this is not it, but it will do for now.  */
-      if (bl->address >= 0x80000c00
-          && bl->address < (0x80000c00 + 0x400))
+         TODO: It might be nice if we could somehow just mark the
+         breakpoint categorically with a flag to indicate it is an overlay
+         breakpoint, maybe even creating a different type of breakpoint
+         would be awesome.  */
+      if (registered_overlay_manager != nullptr
+          && (registered_overlay_manager->find_storage_region (bl->address,
+                                                               &start,
+                                                               &end)
+              || registered_overlay_manager->find_cache_region (bl->address,
+                                                                &start,
+                                                                &end)))
         return true;
 
       // This is the original logic.  This needs to be moved into a default
@@ -179,13 +182,13 @@ overlay_manager_is_overlay_breakpoint_loc (struct bp_location *bl)
 CORE_ADDR
 overlay_manager_non_overlay_address (CORE_ADDR addr)
 {
-  /* Is ADDR with the region into which we map overlays?
-     TODO: Need a real check for this, but for now, using this hack.  */
-  if (addr >= 0x80000c00
-      && addr < (0x80000c00 + 0x400)
-      /* Can only reverse overlay mapping, if we actually have any overlay
-         mappings.  */
-      && curr_mappings != nullptr)
+  CORE_ADDR start, end;
+
+  /* If ADDR is within a cache region then check the current mappings to
+     see if one covers ADDR.  */
+  if (registered_overlay_manager != nullptr
+      && curr_mappings != nullptr
+      && registered_overlay_manager->find_cache_region (addr, &start, &end))
     {
       /* Figure out what address this would have been before it was mapped
          in.  */
@@ -209,6 +212,20 @@ overlay_manager_get_mapped_address_if_possible (CORE_ADDR addr)
   if (addrs.size () > 0)
     return addrs[0];
   return addr;
+}
+
+/* See overlay.h.  */
+
+bool
+overlay_manager_is_unmapped_overlay_address (CORE_ADDR addr)
+{
+  CORE_ADDR start, end;
+
+  if (registered_overlay_manager != nullptr
+      && registered_overlay_manager->find_storage_region (addr, &start, &end))
+    return true;
+
+  return false;
 }
 
 void

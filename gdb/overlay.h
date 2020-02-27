@@ -72,10 +72,68 @@ public:
 
   virtual std::unique_ptr<std::vector<mapping>> read_mappings () = 0;
 
+  /* Set the cache regions list from REGIONS.  See the comment on
+     M_CACHE_REGIONS, this method probably shouldn't be in this class.  */
+  void set_cache_regions (std::vector<std::pair<CORE_ADDR, CORE_ADDR>> regions)
+  {
+    m_cache_regions = regions;
+  }
+
+  /* Set the storage regions list from REGIONS.  See the comment on
+     M_STORAGE_REGIONS, this method probably shouldn't be in this class.  */
+  void set_storage_regions (std::vector<std::pair<CORE_ADDR, CORE_ADDR>> regions)
+  {
+    m_storage_regions = regions;
+  }
+
+  /* If ADDR is within a cache region then update START and END to the
+     extents of the cache region and return true, otherwise the contents
+     of START and END are untouched and return false.  */
+  bool find_cache_region (CORE_ADDR addr, CORE_ADDR *start, CORE_ADDR *end)
+  {
+    for (const auto &r : m_cache_regions)
+      {
+        if (r.first <= addr && r.second > addr)
+          {
+            *start = r.first;
+            *end = r.second;
+            return true;
+          }
+      }
+
+    return false;
+  }
+
+  /* If ADDR is within a storage region then update START and END to the
+     extents of the cache region and return true, otherwise the contents
+     of START and END are untouched and return false.  */
+  bool find_storage_region (CORE_ADDR addr, CORE_ADDR *start, CORE_ADDR *end)
+  {
+    for (const auto &r : m_storage_regions)
+      {
+        if (r.first <= addr && r.second > addr)
+          {
+            *start = r.first;
+            *end = r.second;
+            return true;
+          }
+      }
+
+    return false;
+  }
+
 private:
   /* When true GDB should reload the overlay manager state at the event
      breakpoint.  */
   bool m_reload_on_event;
+
+  /* The lists of cache and storage regions.  Each is a list of pairs, with
+     each pair being a start and end address.
+
+     TODO: These need to be moved into a sub-class, as only some types of
+     overlay manager will actually need these fields.  */
+  std::vector<std::pair<CORE_ADDR, CORE_ADDR>> m_cache_regions;
+  std::vector<std::pair<CORE_ADDR, CORE_ADDR>> m_storage_regions;
 };
 
 /* Return a string containing the name of a symbol at which we should stop
@@ -120,5 +178,9 @@ extern CORE_ADDR overlay_manager_non_overlay_address (CORE_ADDR addr);
    otherwise return ADDR.  */
 
 extern CORE_ADDR overlay_manager_get_mapped_address_if_possible (CORE_ADDR addr);
+
+/* Return true if ADDR is an address that could be mapped in.  */
+
+extern bool overlay_manager_is_unmapped_overlay_address (CORE_ADDR addr);
 
 #endif /* !defined OVERLAY_H */

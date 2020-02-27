@@ -28,6 +28,9 @@
 #define READ_MAPPINGS_METHOD "read_mappings"
 #define ADD_MAPPING_METHOD "add_mapping"
 
+#define SET_STORAGE_REGION_METHOD "set_storage_region"
+#define SET_CACHE_REGION_METHOD "set_cache_region"
+
 /* Declare. */
 struct gdbpy_ovly_mgr_object;
 static PyObject * py_overlay_manager_add_mapping (PyObject *self,
@@ -218,7 +221,16 @@ py_overlay_manager_read_mappings (PyObject *self, PyObject *args)
   Py_RETURN_NONE;
 }
 
-/* TODO */
+/* Called to register an overlay mapping.  Takes three parameters 'src',
+   'dst', and 'len', which describe an active overlay mapping.
+
+   This method should only be called from within the 'read_mappings' call
+   to record the mappings.  Any other calls to this method will be
+   ignored.
+
+   TODO: I'm not really happy with this API, I would much rather that the
+   'read_mappings' call return a list of all the mappings or throw an
+   error if something goes wrong.  */
 
 static PyObject *
 py_overlay_manager_add_mapping (PyObject *self, PyObject *args, PyObject *kwargs)
@@ -254,6 +266,69 @@ py_overlay_manager_add_mapping (PyObject *self, PyObject *args, PyObject *kwargs
   Py_RETURN_NONE;
 }
 
+/* ... */
+
+static PyObject *
+py_overlay_manager_set_storage_region (PyObject *self, PyObject *args,
+                                       PyObject *kwargs)
+{
+  gdbpy_ovly_mgr_object *obj = (gdbpy_ovly_mgr_object *) self;
+
+  static const char *keywords[] = { "start", "end", NULL };
+  PyObject *start_addr_obj, *end_addr_obj;
+  CORE_ADDR start_addr, end_addr;
+
+  if (!gdb_PyArg_ParseTupleAndKeywords (args, kwargs, "OO", keywords,
+					&start_addr_obj, &end_addr_obj))
+    return nullptr;
+
+  if (get_addr_from_python (start_addr_obj, &start_addr) < 0)
+    return nullptr;
+
+  if (get_addr_from_python (end_addr_obj, &end_addr) < 0)
+    return nullptr;
+
+  std::vector<std::pair<CORE_ADDR, CORE_ADDR>> regions;
+  regions.push_back ({start_addr, end_addr});
+  obj->manager->set_storage_regions (regions);
+  Py_RETURN_NONE;
+}
+
+/* Called from the Python code to register the cache region.  Takes two
+   parameters, 'start' and 'end', both are addresses.  The start address
+   is the first address in the region, and end is the first address beyond
+   the region.
+
+   TODO: I'm not happy with this API, I would rather that we get passed a
+   list of cache regions as I suspect that it might be true that we can
+   have more than one.  */
+
+static PyObject *
+py_overlay_manager_set_cache_region (PyObject *self, PyObject *args,
+                                       PyObject *kwargs)
+{
+  gdbpy_ovly_mgr_object *obj = (gdbpy_ovly_mgr_object *) self;
+
+  static const char *keywords[] = { "start", "end", NULL };
+  PyObject *start_addr_obj, *end_addr_obj;
+  CORE_ADDR start_addr, end_addr;
+
+  if (!gdb_PyArg_ParseTupleAndKeywords (args, kwargs, "OO", keywords,
+					&start_addr_obj, &end_addr_obj))
+    return nullptr;
+
+  if (get_addr_from_python (start_addr_obj, &start_addr) < 0)
+    return nullptr;
+
+  if (get_addr_from_python (end_addr_obj, &end_addr) < 0)
+    return nullptr;
+
+  std::vector<std::pair<CORE_ADDR, CORE_ADDR>> regions;
+  regions.push_back ({start_addr, end_addr});
+  obj->manager->set_cache_regions (regions);
+  Py_RETURN_NONE;
+}
+
 /* Methods on gdb.OverlayManager.  */
 
 static PyMethodDef overlay_manager_object_methods[] =
@@ -265,6 +340,14 @@ static PyMethodDef overlay_manager_object_methods[] =
   { ADD_MAPPING_METHOD, (PyCFunction) py_overlay_manager_add_mapping,
     METH_VARARGS | METH_KEYWORDS,
     "Callback to register a single overlay mapping." },
+  { SET_STORAGE_REGION_METHOD,
+    (PyCFunction) py_overlay_manager_set_storage_region,
+    METH_VARARGS | METH_KEYWORDS,
+    "Callback to register the location of the storage region."},
+  { SET_CACHE_REGION_METHOD,
+    (PyCFunction) py_overlay_manager_set_cache_region,
+    METH_VARARGS | METH_KEYWORDS,
+    "Callback to register the location of the cache region."},
   { NULL } /* Sentinel.  */
 };
 

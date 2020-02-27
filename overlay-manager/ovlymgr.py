@@ -368,6 +368,10 @@ class MyOverlayManager (gdb.OverlayManager):
         print ("Storage:")
         print ("  Start: 0x%x" % (ovly_data.storage ().start_address ()))
         print ("    End: 0x%x" % (ovly_data.storage ().end_address ()))
+        self.set_storage_region (ovly_data.storage ().start_address (),
+                                 ovly_data.storage ().end_address ())
+        self.set_cache_region (ovly_data.cache ().start_address (),
+                               ovly_data.cache ().end_address ())
 
     def __del__ (self):
         print ('Destructor called for MyOverlayManager')

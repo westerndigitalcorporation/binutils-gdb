@@ -1374,6 +1374,12 @@ lang_memory_region_lookup (const char *const name, bfd_boolean create)
   return new_region;
 }
 
+lang_memory_region_type *
+get_lang_memory_region_list (void)
+{
+  return lang_memory_region_list;
+}
+
 void
 lang_memory_region_alias (const char *alias, const char *region_name)
 {

@@ -114,10 +114,143 @@ riscv_create_output_section_statements (void)
 extern void
 riscv_elf_overlay_hook_${EMULATION_NAME}(struct bfd_link_info *info);
 
+extern void
+riscv_elf_overlay_printmap_${EMULATION_NAME}(bfd *obfd,
+                                             struct bfd_link_info *info,
+                                             FILE *mapfile);
+
 static void
 riscv_elf_after_check_relocs (void)
 {
   riscv_elf_overlay_hook_${EMULATION_NAME}(&link_info);
+}
+
+static const char * get_type_from_name_and_flags(const char *name, flagword flags, bfd_vma elftype) {
+  if (flags & SEC_DEBUGGING)
+    return "Debug Information";
+  if (flags & SEC_CODE) {
+    if (strcmp(name, ".ovlgrps") == 0)
+      return "Overlay Group Data";
+    return "Code";
+  }
+  if (flags & SEC_DATA) {
+    if (elftype == SHT_INIT_ARRAY)
+      return "Constructor Array";
+    if (elftype == SHT_FINI_ARRAY)
+      return "Destructor Array";
+    if (strcmp(name, ".eh_frame") == 0)
+      return "Exception Handling Frame Information";
+    if (flags & SEC_READONLY)
+      return "Read-only Data";
+    return "Data";
+  }
+  if (elftype == SHT_NOBITS) {
+    if (strcmp(name, ".bss") == 0)
+      return "BSS";
+    if (strcmp(name, ".stack") == 0)
+      return "Stack";
+    return "NOBITS";
+  }
+  if (elftype == 1879048195)
+    return "RISC-V Attributes";
+  if (elftype == SHT_PROGBITS)
+    return "PROGBITS";
+  return "Unknown";
+}
+
+static void
+riscv_ovl_additional_link_map_text (bfd *obfd,
+				    struct bfd_link_info *info ATTRIBUTE_UNUSED,
+				    FILE *mapfile)
+{
+  if (mapfile == NULL)
+    return;
+
+  lang_memory_region_type *m;
+
+  minfo ("*** start custom linker map ***\n");
+  /* 1.1 Map file size summary  */
+  minfo ("Memory summary\n\n");
+  for (m = get_lang_memory_region_list (); m != NULL; m = m->next)
+    {
+      char szbuf[100];
+      bfd_vma memsize;
+      lang_output_section_statement_type *s;
+
+      /* Don't print the default memory region.  */
+      if (strcmp (m->name_list.name, DEFAULT_MEMORY_REGION) == 0)
+        continue;
+
+      memsize = m->current - m->origin;
+      float memsizef = memsize / 1024.0;
+      char *suffix = "KiB";
+      if (memsizef >= 1024.0)
+        {
+          memsizef /= 1024.0;
+          suffix = "MiB";
+        }
+      if (memsizef >= 1024.0)
+        {
+          memsizef /= 1024.0;
+          suffix = "GiB";
+	}
+      sprintf (szbuf, "%3.2f", memsizef);
+      fprintf (config.map_file, "%-24s= %8li (%6s %s)\n", m->name_list.name,
+               memsize, szbuf, suffix);
+
+      s = &lang_output_section_statement.head->output_section_statement;
+      while (s != NULL)
+        {
+	  if (s->bfd_section != NULL && s->region == m)
+            {
+              asection *section = s->bfd_section;
+              if (section->size > 0)
+                {
+                  float sectsizef = section->size / 1024.0;
+                  sprintf (szbuf, "%3.2f", sectsizef);
+                  fprintf (config.map_file, "    %-20s= %8li (%6s KiB)\n",
+                           section->name, section->size, szbuf);
+                }
+            }
+          s = s->next;
+        }
+    }
+
+  /* 1.2 Map file sections summary.  */
+  minfo ("\nSection summary\n\n");
+  {
+    lang_output_section_statement_type *s;
+    s = &lang_output_section_statement.head->output_section_statement;
+    while (s != NULL)
+      {
+	if (s->bfd_section != NULL && s->bfd_section->owner == obfd)
+	  {
+            asection *section = s->bfd_section;
+            bfd_vma end = section->vma + section->size;
+            flagword flags = section->flags;
+            if (!(flags & SEC_EXCLUDE || flags & SEC_DEBUGGING))
+	      {
+		unsigned sec_shndx =
+		  _bfd_elf_section_from_bfd_section (section->owner, section);
+		Elf_Internal_Shdr *hdr =
+		  elf_elfsections (section->owner)[sec_shndx];
+		fprintf (config.map_file, "%-20s [%08lx-%08lx)",
+			 section->name, section->vma, end);
+		fprintf (config.map_file, "  Type: %s\n",
+			 get_type_from_name_and_flags(section->name, flags,
+						      hdr->sh_type));
+	      }
+          }
+	s = s->next;
+      }
+  }
+
+  /* 1.3/1.4 Map file overlay sections.  */
+  minfo ("\nOverlay summary\n\n");
+
+  riscv_elf_overlay_printmap_${EMULATION_NAME}(link_info.output_bfd, &link_info,
+					       config.map_file);
+  minfo ("*** end custom linker map ***\n");
 }
 
 EOF
@@ -194,3 +327,4 @@ LDEMUL_BEFORE_ALLOCATION=riscv_elf_before_allocation
 LDEMUL_AFTER_ALLOCATION=gld${EMULATION_NAME}_after_allocation
 LDEMUL_CREATE_OUTPUT_SECTION_STATEMENTS=riscv_create_output_section_statements
 LDEMUL_AFTER_CHECK_RELOCS=riscv_elf_after_check_relocs
+LDEMUL_EXTRA_MAP_FILE_TEXT=riscv_ovl_additional_link_map_text

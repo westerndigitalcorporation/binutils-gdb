@@ -134,6 +134,9 @@ struct ovl_group_list_entry
   bfd_vma padded_group_size;
   bfd_vma ovlgrpdata_offset;
 
+  /* The calculated CRC for this function.  */
+  unsigned int crc;
+
   /* The first and last functions allocated to this group.  */
   const char *first_func;
   const char *last_func;
@@ -343,6 +346,7 @@ struct ovl_func_hash_entry
   /* TRUE if function belongs to more than one group.  */
   bfd_boolean multigroup;
   bfd_vma multigroup_offset;
+  bfd_boolean multigroup_token;
 };
 
 static struct ovl_group_list_entry *
@@ -862,6 +866,9 @@ emit_ovl_padding_and_crc_entry (struct ovl_group_list_entry *entry,
   /* Put the 32-bit CRC at the end after the padding.  */
   bfd_put_32 (info->output_bfd, crc,
               padding_sec->contents + padding_sec->size - OVL_CRC_SZ);
+
+  /* Store the CRC for printing in the mapfile.  */
+  entry->crc = crc;
 
   if (riscv_comrv_debug)
     fprintf(stderr, "%x\n", crc);
@@ -2952,7 +2959,8 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
       /* Create the token referring to the multigroup.  */
       bfd_vma multigroup_id;
       multigroup_id = func_groups->multigroup_offset / OVLMULTIGROUP_ITEM_SIZE;
-      return ovltoken(1, from_plt, 0, multigroup_id);
+      func_groups->multigroup_token = ovltoken(1, from_plt, 0, multigroup_id);
+      return func_groups->multigroup_token;
     }
 }
 
@@ -6452,6 +6460,76 @@ riscv_elf_overlay_sort_value (asection *s, struct bfd_link_info *info)
     fprintf(stderr, " - Offset of %s is %lx\n", s->name, offset);
 
   return -offset;
+}
+
+/* Print state of overlay system to mapfile.  */
+void
+riscv_elf_overlay_printmap_elfNNlriscv(bfd *obfd,
+                                       struct bfd_link_info *info,
+                                       FILE *mapfile);
+void
+riscv_elf_overlay_printmap_elfNNlriscv(bfd *obfd,
+                                       struct bfd_link_info *info,
+                                       FILE *mapfile)
+{
+  struct riscv_elf_link_hash_table *htab;
+  asection *ovldata_sec;
+
+  htab = riscv_elf_hash_table (info);
+  BFD_ASSERT (htab != NULL);
+  if (htab->elf.dynobj == NULL)
+    return;
+  ovldata_sec = bfd_get_section_by_name (obfd, ".ovlgrps");
+  if (ovldata_sec == NULL)
+    return;
+
+  for (unsigned g_id = 0; g_id <= ovl_max_group; g_id++)
+    {
+      bfd_vma start_addr;
+      struct ovl_group_list_entry *group =
+	ovl_group_list_lookup (&htab->ovl_group_list, g_id, FALSE);
+      if (!group)
+	continue;
+
+      start_addr = ovldata_sec->vma + group->ovlgrpdata_offset;
+
+      /* groups, virtual address */
+      fprintf(mapfile, "Group %i:\n", g_id);
+      fprintf(mapfile, "  Start address: %8lx\n", start_addr);
+
+      /* functions (+ (global offset?) + token) */
+      for (int i = 0; i < group->n_functions; i++)
+	{
+	  const char *function = group->functions[i];
+	  struct ovl_func_hash_entry *func =
+	    ovl_func_hash_lookup (&htab->ovl_func_table, function, FALSE, FALSE);
+	  BFD_ASSERT (func != NULL);
+	  struct ovl_func_group_info *func_instance = func->groups;
+	  while (func_instance != NULL && func_instance->id != g_id)
+	    func_instance = func_instance->next;
+	  BFD_ASSERT (func_instance != NULL);
+
+	  uint32_t token;
+	  if (func->multigroup)
+	    token = func->multigroup_token;
+	  else
+	    token = ovltoken(0, 0, func_instance->offset, g_id);
+
+	  fprintf(mapfile, "  > %-3li: %-20s (token %08x)\n",
+		  func_instance->offset, function, token);
+
+	}
+
+      /* padding */
+      if (group->padded_group_size != group->group_size)
+	{
+	  bfd_vma padding = group->padded_group_size - group->group_size;
+	  fprintf(mapfile, "  Group padding: %li bytes\n", padding);
+	}
+
+      /* group CRC */
+      fprintf(mapfile, "  Group CRC: %08x\n", group->crc);
+    }
 }
 
 #define TARGET_LITTLE_SYM		riscv_elfNN_vec

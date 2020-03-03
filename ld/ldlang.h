@@ -519,6 +519,8 @@ extern void lang_finish
   (void);
 extern lang_memory_region_type * lang_memory_region_lookup
   (const char * const, bfd_boolean);
+extern lang_memory_region_type * get_lang_memory_region_list
+  (void);
 extern void lang_memory_region_alias
   (const char *, const char *);
 extern void lang_map

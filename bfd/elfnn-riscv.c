@@ -169,6 +169,7 @@ struct riscv_elf_link_hash_table
   /* Sizes for the group table and multigroup table, which will
      populate group 0.  */
   bfd_vma ovl_group_table_size;
+  bfd_vma ovl_group_table_max_group;
   bfd_vma ovl_multigroup_table_size;
 
   /* Mappings from groups to functions and vice-versa.  */
@@ -940,6 +941,7 @@ riscv_elf_link_hash_table_create (bfd *abfd)
   ret->next_ovlplt_offset = 0;
 
   ret->ovl_group_table_size = 0;
+  ret->ovl_group_table_max_group = 0;
   ret->ovl_multigroup_table_size = 0;
 
   bfd_boolean success;
@@ -2412,6 +2414,9 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
   /* Set the size of .ovlgrptbl section, adding a placeholder last entry and
      space for a null terminator.  */
   htab->ovl_group_table_size = (ovl_max_group + 3) * 2;
+  htab->ovl_group_table_max_group = ovl_max_group;
+  if (htab->ovl_group_table_size % 4)
+    htab->ovl_group_table_size += 4 - (htab->ovl_group_table_size % 4);
 
   /* Now that the size of the group table and multigroup table has been
      determined, we can use the sum of these as the size of group 0, which
@@ -4264,7 +4269,7 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 
       bfd_vma offset = 0;
       unsigned group = 0;
-      unsigned max_group = (htab->ovl_group_table_size / 2) - 3;
+      unsigned max_group = htab->ovl_group_table_max_group;
       for (group = 0; group <= (max_group + 1); group++)
 	{
 	  /* Store current offset.  */
@@ -4280,6 +4285,11 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
       /* The last entry in the .ovlgrptbl is a null terminator.  */
       bfd_put_16 (htab->elf.dynobj, 0,
 		  group_table_sec->contents + ((max_group + 2) * 2));
+      /* There might also be some space after .ovlgrptbl to bring the
+         subsequent multigroup table into alignment. Fill that with nulls too */
+      unsigned i;
+      for (i = (max_group + 3) * 2; i < htab->ovl_group_table_size; i++)
+	bfd_put_8 (htab->elf.dynobj, 0, group_table_sec->contents + i);
     }
 
     unsigned char *current_data;

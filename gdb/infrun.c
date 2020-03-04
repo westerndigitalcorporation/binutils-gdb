@@ -301,6 +301,19 @@ update_observer_mode (void)
   observer_mode = observer_mode_1 = newval;
 }
 
+/* Control variable for overlay manager skipping.  When this is non-zero the
+   overlay manager is skipped during stepping.  */
+unsigned int skip_ovlmgr = 0;
+
+/* Handle 'show skip ovlmgr overlay'.  */
+
+static void
+show_skip_ovlmgr (struct ui_file *file, int from_tty,
+                  struct cmd_list_element *c, const char *value)
+{
+  fprintf_filtered (file, _("Overlay manager skipping is %s.\n"), value);
+}
+
 /* Tables of how to react to signals; the user sets them.  */
 
 static unsigned char signal_stop[GDB_SIGNAL_LAST];
@@ -6701,7 +6714,8 @@ process_event_stop_test (struct execution_control_state *ecs)
   gdbarch = get_frame_arch (frame);
   fill_in_stop_func (gdbarch, ecs);
 
-  if (ecs->stop_func_name != 0
+  if (skip_ovlmgr
+      && ecs->stop_func_name != 0
       && ecs->stop_func_start == ecs->event_thread->suspend.stop_pc)
     {
       bptype type = lookup_ovlmgr_bp_type(ecs->stop_func_name);
@@ -9781,4 +9795,13 @@ or signalled."),
 			   show_observer_mode,
 			   &setlist,
 			   &showlist);
+
+  add_setshow_zuinteger_cmd ("skip-ovlmgr", class_maintenance, &skip_ovlmgr,
+                             _("\
+Set overlay manager skipping."), _("\
+Show overlay manager skipping."), _("\
+When non-zero, overlay manager skipping is enabled."),
+                             NULL,
+                             show_skip_ovlmgr,
+                             &setlist, &showlist);
 }

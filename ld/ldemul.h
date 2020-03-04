@@ -104,6 +104,8 @@ extern struct bfd_elf_version_expr *ldemul_new_vers_pattern
   (struct bfd_elf_version_expr *);
 extern void ldemul_extra_map_file_text
   (bfd *, struct bfd_link_info *, FILE *);
+extern void ldemul_extra_early_map_file_text
+  (bfd *, struct bfd_link_info *, FILE *);
 /* Return 1 if we are emitting CTF early, and 0 if ldemul_examine_strtab_for_ctf
    will be called by the target.  */
 extern int ldemul_emit_ctf_early
@@ -221,6 +223,12 @@ typedef struct ld_emulation_xfer_struct {
   /* Called when printing the map file, in case there are
      emulation-specific sections for it.  */
   void (*extra_map_file_text)
+    (bfd *, struct bfd_link_info *, FILE *);
+
+  /* Called when printing the map file, in case there are
+     emulation-specific sections for it, before most of the file is
+     printed.  */
+  void (*extra_early_map_file_text)
     (bfd *, struct bfd_link_info *, FILE *);
 
   /* If this returns true, we emit CTF as early as possible: if false, we emit

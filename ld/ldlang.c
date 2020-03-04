@@ -2257,6 +2257,9 @@ lang_map (void)
   lang_memory_region_type *m;
   bfd_boolean dis_header_printed = FALSE;
 
+  ldemul_extra_early_map_file_text (link_info.output_bfd, &link_info,
+			      config.map_file);
+
   LANG_FOR_EACH_INPUT_STATEMENT (file)
     {
       asection *s;

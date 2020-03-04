@@ -86,6 +86,7 @@ struct ld_emulation_xfer_struct ld_vanilla_emulation =
   NULL,	/* find_potential_libraries */
   NULL,	/* new_vers_pattern */
   NULL,	/* extra_map_file_text */
+  NULL,	/* extra_early_map_file_text */
   NULL, /* emit_ctf_early */
   NULL  /* examine_strtab_for_ctf */
 };

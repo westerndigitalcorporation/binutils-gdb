@@ -168,9 +168,8 @@ riscv_ovl_additional_link_map_text (bfd *obfd,
 
   lang_memory_region_type *m;
 
-  minfo ("*** start custom linker map ***\n");
   /* 1.1 Map file size summary  */
-  minfo ("Memory summary\n\n");
+  minfo ("\nMemory summary\n\n");
   for (m = get_lang_memory_region_list (); m != NULL; m = m->next)
     {
       char szbuf[100];
@@ -250,7 +249,7 @@ riscv_ovl_additional_link_map_text (bfd *obfd,
 
   riscv_elf_overlay_printmap_${EMULATION_NAME}(link_info.output_bfd, &link_info,
 					       config.map_file);
-  minfo ("*** end custom linker map ***\n");
+  minfo ("\n");
 }
 
 EOF

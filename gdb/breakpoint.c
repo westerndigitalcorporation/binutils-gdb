@@ -6107,6 +6107,8 @@ bpstat_run_callbacks (bpstat bs_head)
 	case bp_gnu_ifunc_resolver_return:
 	  gnu_ifunc_resolver_return_stop (b);
 	  break;
+	case bp_ovlmgr_call_master:
+	case bp_ovlmgr_exit_master:
 	case bp_overlay_event:
 	  handle_overlay_bp_event ();
 	  break;
@@ -7786,18 +7788,32 @@ breakpoint *
 enable_ovlmgr_breakpoint (bptype type)
 {
   struct breakpoint *b;
+  struct breakpoint *ovlmgr_breakpoint = NULL;
 
   gdb_assert (type == bp_ovlmgr_call_master || type == bp_ovlmgr_exit_master);
 
   ALL_BREAKPOINTS (b)
     if (b->type == type)
     {
+      /* There should only be one ovlmgr breakpoint.  */
+      gdb_assert (ovlmgr_breakpoint == NULL);
       b->enable_state = bp_enabled;
       update_global_location_list (UGLL_MAY_INSERT);
-      return b;
+      ovlmgr_breakpoint = b;
+    }
+    /* Disable the overlay event bp so that we do not use up more than one hw
+       bp. The actions that would have been performed for the overlay event bp
+       will be done just before leaving the overlay manager.  */
+    else if (b->type == bp_overlay_event)
+    {
+      b->enable_state = bp_disabled;
+      update_global_location_list (UGLL_MAY_INSERT);
     }
 
-  gdb_assert(false);
+  /* Make sure the ovlmgr breakpoint was found.  */
+  gdb_assert (ovlmgr_breakpoint != NULL);
+
+  return ovlmgr_breakpoint;
 }
 
 void
@@ -7812,6 +7828,13 @@ disable_ovlmgr_breakpoint (bptype type)
     {
       b->enable_state = bp_disabled;
       update_global_location_list (UGLL_DONT_INSERT);
+    }
+    /* Re-enable the overlay event bp now that overlay manager skipping is
+       done.  */
+    else if (b->type == bp_overlay_event)
+    {
+      b->enable_state = bp_enabled;
+      update_global_location_list (UGLL_MAY_INSERT);
     }
 }
 

@@ -6733,6 +6733,15 @@ process_event_stop_test (struct execution_control_state *ecs)
 	}
     }
 
+  if (skip_ovlmgr
+      && pc_in_section (ecs->event_thread->suspend.stop_pc, ".ovlplt"))
+    {
+      if (debug_infrun)
+        fprintf_unfiltered (gdb_stdlog, "infrun: skipping .ovlplt\n");
+      keep_going (ecs);
+      return;
+    }
+
   /* If stepping through a line, keep going if still within it.
 
      Note that step_range_end is the address of the first instruction

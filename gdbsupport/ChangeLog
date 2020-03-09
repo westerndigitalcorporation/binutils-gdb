@@ -1,3 +1,8 @@
+2020-07-14  Andrew Burgess  <andrew.burgess@embecosm.com>
+
+	* create-version.sh: Add git sha information.
+	* remote-repository: New file.
+
 2021-06-17  Pedro Alves  <pedro@palves.net>
 
 	* scoped_ignore_signal.h

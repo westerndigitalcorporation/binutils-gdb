@@ -1,3 +1,8 @@
+2020-03-27  Andrew Burgess  <andrew.burgess@embecosm.com>
+
+	* Makefile.in (stamp-version): Add remote-repository file as a
+	dependency.
+
 2020-03-17  Kamil Rytarowski  <n54@gmx.com>
 
 	* amd64-bsd-nat.c: Include amd64-bsd-nat.h".

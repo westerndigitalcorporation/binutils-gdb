@@ -1,0 +1,2 @@
+pattern:ssh://git@everest.git.embecosm.com:2226/everest/binutils-gdb.git
+branch:comrv-devel

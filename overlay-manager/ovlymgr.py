@@ -348,7 +348,13 @@ class ParseComRV (gdb.Command):
                 return True
 
             def comrv_not_initialised (self):
-                print ("ComRV not yet initialisd")
+                print ("ComRV not yet initialisd:")
+                print ("      %s: %d\n"
+                       % (INIT_SYMBOL,
+                          int (gdb.parse_and_eval ("%s" % (INIT_SYMBOL)))))
+                print ("     &%s: 0x%x"
+                       % (INIT_SYMBOL,
+                          int (gdb.parse_and_eval ("&%s" % (INIT_SYMBOL)))))
 
         print_mapped_overlays ()
 

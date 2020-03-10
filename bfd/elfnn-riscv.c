@@ -845,24 +845,26 @@ emit_ovl_padding_and_crc_entry (struct ovl_group_list_entry *entry,
   asection *padding_sec = bfd_get_section_by_name (htab->elf.dynobj, group_sec_name);
   BFD_ASSERT(padding_sec != NULL);
 
-  /* Calculate CRC.  */
-  /* TODO: [TC12], but use libiberty's xcrc32 as the default.  */
-  unsigned int crc = 0xffffffff;
-  crc = xcrc32(ovl_cached_data + entry->ovlgrpdata_offset,
-               padding_sec->size - OVL_CRC_SZ, crc);
-  if (riscv_comrv_debug)
-    fprintf(stderr, "%x", crc);
-
   /* Emit the padding into the padding section.  */
   for (bfd_vma offs = 0; offs < padding_sec->size; offs += 2)
     bfd_put_16 (htab->elf.dynobj, group, padding_sec->contents + offs);
+
+  /* Calculate the CRC of the group.  */
+  /* TODO: [TC12], but use libiberty's xcrcr32 as the default.  */
+  unsigned int crc = 0xffffffff;
+  crc = xcrc32(ovl_cached_data + entry->ovlgrpdata_offset,
+               padding_sec->output_offset - entry->ovlgrpdata_offset, crc);
+  /* Also calculate the CRC of the padding. This has to be done in a
+     separate step as currently the padding is not in the same section as
+     the group data.  */
+  crc = xcrc32(padding_sec->contents, padding_sec->size - OVL_CRC_SZ, crc);
 
   /* Put the 32-bit CRC at the end after the padding.  */
   bfd_put_32 (info->output_bfd, crc,
               padding_sec->contents + padding_sec->size - OVL_CRC_SZ);
 
   if (riscv_comrv_debug)
-    fprintf (stderr, "\n");
+    fprintf(stderr, "%x\n", crc);
   return TRUE;
 }
 

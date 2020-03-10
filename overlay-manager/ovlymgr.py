@@ -255,12 +255,15 @@ class overlay_data:
         else:
             groups_data = None
 
-        # Now package all of the components into a single class instance that
-        # we return.
-        overlay_data._instance \
-            = overlay_data._overlay_data_inner (cache_desc, storage_desc,
-                                                 groups_data)
-        return overlay_data._instance
+        # Now package all of the components into a single class
+        # instance that we return.  We only cache the object if ComRV
+        # has been initialised, in this way we shouldn't get stuck
+        # with a cached, not initialised object.
+        obj = overlay_data._overlay_data_inner (cache_desc, storage_desc,
+                                                groups_data)
+        if (init_been_called):
+            overlay_data._instance = obj
+        return obj
 
     # Discard the information loaded from the cache.  The next time fetch is
     # called the information will be reread.

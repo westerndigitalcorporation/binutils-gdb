@@ -6198,6 +6198,17 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
     elfh = (struct elf_link_hash_entry *)bfdh;
     elfh->type = ELF_ST_INFO (STB_GLOBAL, STT_OBJECT);
     elfh->size = htab->ovl_multigroup_table_size;
+
+    bfdh = NULL;
+    res = _bfd_generic_link_add_one_symbol (info, htab->elf.dynobj,
+					    "__OVERLAY_MULTIGROUP_TABLE_END",
+					    BSF_GLOBAL, s,
+					    htab->ovl_group_table_size + htab->ovl_multigroup_table_size,
+					    NULL, TRUE, FALSE, &bfdh);
+    BFD_ASSERT(res != FALSE);
+    elfh = (struct elf_link_hash_entry *)bfdh;
+    elfh->type = ELF_ST_INFO (STB_GLOBAL, STT_OBJECT);
+    elfh->size = 0;
   }
 
   /* Create duplicate sections for functions in multigroups.  */

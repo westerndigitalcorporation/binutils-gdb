@@ -347,6 +347,9 @@ struct ovl_func_hash_entry
   bfd_boolean multigroup;
   bfd_vma multigroup_offset;
   bfd_boolean multigroup_token;
+  /* PLT offset if this function has a PLT value.  */
+  bfd_boolean plt_entry;
+  bfd_vma plt_offset;
 };
 
 static struct ovl_group_list_entry *
@@ -3890,6 +3893,15 @@ riscv_elf_relocate_section (bfd *output_bfd,
 
 	  if (offset >= next_ovlplt_offset)
 	    {
+	      /* Store the PLT offset for this function in its metadata, this is
+		 used to print the linker map later on.  */
+	      struct ovl_func_hash_entry *func_groups =
+		ovl_func_hash_lookup(&htab->ovl_func_table, h->root.root.string,
+				     FALSE, FALSE);
+	      BFD_ASSERT(func_groups != NULL);
+	      func_groups->plt_entry = TRUE;
+	      func_groups->plt_offset = offset;
+
 	      bfd_put_32 (output_bfd, relocation,
 	                  htab->sovlplt->contents + offset);
 	      htab->next_ovlplt_offset += OVLPLT_ENTRY_SIZE;
@@ -6462,6 +6474,30 @@ riscv_elf_overlay_sort_value (asection *s, struct bfd_link_info *info)
   return -offset;
 }
 
+/* Print one thunk entry for mapfile.  */
+struct thunk_for_func_data
+{
+  bfd_vma target_offset;
+  bfd_vma plt_start_addr;
+  FILE *mapfile;
+};
+
+static bfd_boolean
+map_print_think_for_func (struct ovl_func_hash_entry *entry,
+                          void *info)
+{
+  struct thunk_for_func_data *data = info;
+
+  if (entry->plt_entry && entry->plt_offset == data->target_offset)
+    {
+      bfd_vma entry_addr = data->plt_start_addr + data->target_offset;
+      fprintf (data->mapfile, "%08lx: %s\n", entry_addr, entry->root.string);
+      return FALSE;
+    }
+
+  return TRUE;
+}
+
 /* Print state of overlay system to mapfile.  */
 void
 riscv_elf_overlay_printmap_elfNNlriscv(bfd *obfd,
@@ -6483,19 +6519,24 @@ riscv_elf_overlay_printmap_elfNNlriscv(bfd *obfd,
   if (ovldata_sec == NULL)
     return;
 
+  fprintf (mapfile, "\nOverlay summary\n\n");
+  fprintf (mapfile, "GROUP        START    END        LENGTH\n");
+
   for (unsigned g_id = 0; g_id <= ovl_max_group; g_id++)
     {
-      bfd_vma start_addr;
+      bfd_vma start_addr, end_addr, size;
       struct ovl_group_list_entry *group =
 	ovl_group_list_lookup (&htab->ovl_group_list, g_id, FALSE);
       if (!group)
 	continue;
 
       start_addr = ovldata_sec->vma + group->ovlgrpdata_offset;
+      end_addr = start_addr + group->padded_group_size;
+      size = group->padded_group_size;
 
       /* groups, virtual address */
-      fprintf(mapfile, "Group %i:\n", g_id);
-      fprintf(mapfile, "  Start address: %8lx\n", start_addr);
+      fprintf (mapfile, "Group %-4i  [%8lx-%8lx)  %08lx\n", g_id, start_addr,
+	       end_addr, size);
 
       /* functions (+ (global offset?) + token) */
       for (int i = 0; i < group->n_functions; i++)
@@ -6513,22 +6554,43 @@ riscv_elf_overlay_printmap_elfNNlriscv(bfd *obfd,
 	  if (func->multigroup)
 	    token = func->multigroup_token;
 	  else
-	    token = ovltoken(0, 0, func_instance->offset, g_id);
+	    token = ovltoken (0, 0, func_instance->offset, g_id);
 
-	  fprintf(mapfile, "  > %-3li: %-20s (token %08x)\n",
-		  func_instance->offset, function, token);
+	  fprintf (mapfile, "  > %8lx: %-20s (token %08x",
+		   func_instance->offset + start_addr, function, token);
 
+	  if (func->multigroup)
+	    fprintf (mapfile, ", multigroup");
+	  fprintf (mapfile, ")\n");
 	}
 
       /* padding */
       if (group->padded_group_size != group->group_size)
 	{
 	  bfd_vma padding = group->padded_group_size - group->group_size;
-	  fprintf(mapfile, "  Group padding: %li bytes\n", padding);
+	  fprintf (mapfile, "  Padding (before CRC): %li bytes\n", padding);
 	}
 
       /* group CRC */
-      fprintf(mapfile, "  Group CRC: %08x\n", group->crc);
+      fprintf (mapfile, "  CRC: %08x\n", group->crc);
+    }
+
+  if (htab->sovlplt)
+    {
+      struct thunk_for_func_data thunk_data =
+	{0, htab->sovlplt->output_section->vma, mapfile};
+
+      fprintf (mapfile, "\nOverlay thunk summary\n\n");
+      fprintf (mapfile, "Table start address: %08lx, size: %08lx\n",
+	       htab->sovlplt->output_section->vma,
+	       htab->sovlplt->output_section->size);
+      while (thunk_data.target_offset < htab->next_ovlplt_offset)
+	{
+	  ovl_func_hash_traverse (&htab->ovl_func_table,
+				  map_print_think_for_func,
+				  &thunk_data);
+	  thunk_data.target_offset += OVLPLT_ENTRY_SIZE;
+	}
     }
 }
 

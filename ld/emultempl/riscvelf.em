@@ -170,6 +170,8 @@ riscv_ovl_additional_link_map_text (bfd *obfd,
 
   /* 1.1 Map file size summary  */
   minfo ("\nMemory summary\n\n");
+  minfo ("MEMORY REGION                 MEMORY USED\n");
+  minfo ("    SECTION                   SECTION SIZE       TYPE\n");
   for (m = get_lang_memory_region_list (); m != NULL; m = m->next)
     {
       char szbuf[100];
@@ -207,8 +209,20 @@ riscv_ovl_additional_link_map_text (bfd *obfd,
                 {
                   float sectsizef = section->size / 1024.0;
                   sprintf (szbuf, "%3.2f", sectsizef);
-                  fprintf (config.map_file, "    %-20s= %8li (%6s KiB)\n",
+                  fprintf (config.map_file, "    %-20s= %8li (%6s KiB)",
                            section->name, section->size, szbuf);
+                  {
+		    flagword flags = section->flags;
+		    unsigned sec_shndx =
+		      _bfd_elf_section_from_bfd_section (section->owner,
+							 section);
+		    Elf_Internal_Shdr *hdr =
+		      elf_elfsections (section->owner)[sec_shndx];
+		    fprintf (config.map_file, "  %s\n",
+			     get_type_from_name_and_flags(section->name,
+							  flags,
+							  hdr->sh_type));
+                  }
                 }
             }
           s = s->next;
@@ -217,6 +231,7 @@ riscv_ovl_additional_link_map_text (bfd *obfd,
 
   /* 1.2 Map file sections summary.  */
   minfo ("\nSection summary\n\n");
+  minfo ("NAME                  START    END        TYPE\n");
   {
     lang_output_section_statement_type *s;
     s = &lang_output_section_statement.head->output_section_statement;
@@ -235,7 +250,7 @@ riscv_ovl_additional_link_map_text (bfd *obfd,
 		  elf_elfsections (section->owner)[sec_shndx];
 		fprintf (config.map_file, "%-20s [%08lx-%08lx)",
 			 section->name, section->vma, end);
-		fprintf (config.map_file, "  Type: %s\n",
+		fprintf (config.map_file, "  %s\n",
 			 get_type_from_name_and_flags(section->name, flags,
 						      hdr->sh_type));
 	      }
@@ -245,8 +260,6 @@ riscv_ovl_additional_link_map_text (bfd *obfd,
   }
 
   /* 1.3/1.4 Map file overlay sections.  */
-  minfo ("\nOverlay summary\n\n");
-
   riscv_elf_overlay_printmap_${EMULATION_NAME}(link_info.output_bfd, &link_info,
 					       config.map_file);
   minfo ("\n");

@@ -6570,7 +6570,7 @@ riscv_elf_overlay_printmap_elfNNlriscv(bfd *obfd,
       /* padding */
       if (group->padded_group_size != group->group_size)
 	{
-	  bfd_vma padding = group->padded_group_size - group->group_size;
+	  bfd_vma padding = group->padded_group_size - group->group_size - OVL_CRC_SZ;
 	  fprintf (mapfile, "  Padding (before CRC): %li bytes\n", padding);
 	}
 

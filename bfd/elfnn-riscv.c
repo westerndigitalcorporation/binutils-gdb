@@ -6491,7 +6491,10 @@ map_print_think_for_func (struct ovl_func_hash_entry *entry,
   if (entry->plt_entry && entry->plt_offset == data->target_offset)
     {
       bfd_vma entry_addr = data->plt_start_addr + data->target_offset;
-      fprintf (data->mapfile, "%08lx: %s\n", entry_addr, entry->root.string);
+      bfd_vma end_addr = entry_addr + OVLPLT_ENTRY_SIZE;
+      bfd_vma size = OVLPLT_ENTRY_SIZE;
+      fprintf (data->mapfile, "%-20s [%08lx-%08lx)  %08lx\n",
+               entry->root.string, entry_addr, end_addr, size);
       return FALSE;
     }
 
@@ -6581,9 +6584,7 @@ riscv_elf_overlay_printmap_elfNNlriscv(bfd *obfd,
 	{0, htab->sovlplt->output_section->vma, mapfile};
 
       fprintf (mapfile, "\nOverlay thunk summary\n\n");
-      fprintf (mapfile, "Table start address: %08lx, size: %08lx\n",
-	       htab->sovlplt->output_section->vma,
-	       htab->sovlplt->output_section->size);
+      fprintf (mapfile, "FUNCTION              START    END        LENGTH\n");
       while (thunk_data.target_offset < htab->next_ovlplt_offset)
 	{
 	  ovl_func_hash_traverse (&htab->ovl_func_table,

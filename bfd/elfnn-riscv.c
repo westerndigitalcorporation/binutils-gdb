@@ -991,7 +991,7 @@ riscv_elf_create_ovlplt_section (bfd *abfd, struct bfd_link_info *info)
 
   s = bfd_make_section_anyway_with_flags (abfd, ".ovlplt", flags);
   if (s == NULL
-      || !bfd_set_section_alignment (abfd, s, bed->s->log_file_align))
+      || !bfd_set_section_alignment (s, bed->s->log_file_align))
     return FALSE;
   /* The size of the overlay plt section is calculated later.  */
   s->size = 0;
@@ -6294,8 +6294,7 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 						      strdup(duplicate_func_name),
 						      flags);
 	      BFD_ASSERT(s != NULL);
-	      bfd_set_section_alignment (htab->elf.dynobj, s,
-					 bed->s->log_file_align);
+	      bfd_set_section_alignment (s, bed->s->log_file_align);
 	      s->contents = (unsigned char *)bfd_zalloc (htab->elf.dynobj,
 							 sec->size);
 	      s->size = sec->size;
@@ -6337,7 +6336,7 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 		fprintf(stderr, "* Setting '%s' in '%s' to 512byte alignment.\n",
 		        isec->name, isec->owner->filename);
 
-	      bfd_set_section_alignment (isec->owner, isec, 9); /* 512 alignment.  */
+	      bfd_set_section_alignment (isec, 9); /* 512 alignment.  */
 	    }
 
 	  flagword flags;
@@ -6362,7 +6361,7 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 	  s->size = padding;
 	  s->contents = bfd_zalloc (htab->elf.dynobj, 512);
 	  BFD_ASSERT(s != NULL);
-	  bfd_set_section_alignment (htab->elf.dynobj, s, 0);
+	  bfd_set_section_alignment (s, 0);
 	}
     }
 }

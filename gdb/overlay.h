@@ -183,4 +183,6 @@ extern CORE_ADDR overlay_manager_get_mapped_address_if_possible (CORE_ADDR addr)
 
 extern bool overlay_manager_is_unmapped_overlay_address (CORE_ADDR addr);
 
+extern void _initialize_overlay (void);
+
 #endif /* !defined OVERLAY_H */

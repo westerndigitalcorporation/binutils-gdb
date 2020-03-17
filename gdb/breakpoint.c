@@ -12166,8 +12166,8 @@ update_global_location_list (enum ugll_insert_mode insert_mode)
   bp_locations = NULL;
   bp_locations_count = 0;
 
-  qsort (old_locations.get (), old_locations_count, sizeof (*bp_locations),
-	 bp_locations_compare);
+  std::sort (old_locations.get (), old_locations.get () + old_locations_count,
+	     bp_location_is_less_than);
 
   ALL_BREAKPOINTS (b)
     for (loc = b->loc; loc; loc = loc->next)

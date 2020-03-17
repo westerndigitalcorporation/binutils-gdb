@@ -2428,16 +2428,15 @@ static void
 insert_non_overlay_breakpoint_loc (struct bp_location *bl,
                                    gdb_exception *bp_excpt)
 {
-  TRY
+  try
     {
       if (bl->owner->ops->insert_location (bl) != 0)
         *bp_excpt = gdb_exception {RETURN_ERROR, GENERIC_ERROR};
     }
-  CATCH (e, RETURN_MASK_ALL)
+  catch (const gdb_exception &e)
     {
       *bp_excpt = e;
     }
-  END_CATCH
 }
 
 #if 0
@@ -2610,7 +2609,7 @@ insert_overlay_breakpoint_loc (struct bp_location *bl,
                         core_addr_to_string (bl->address));
 
   /* No overlay handling: just set the breakpoint.  */
-  TRY
+  try
     {
       int val;
 
@@ -2628,13 +2627,12 @@ insert_overlay_breakpoint_loc (struct bp_location *bl,
           *bp_excpt = gdb_exception {RETURN_ERROR, GENERIC_ERROR};
         }
     }
-  CATCH (e, RETURN_MASK_ALL)
+  catch (const gdb_exception &e)
     {
       if (debug_overlay)
-        fprintf_unfiltered (gdb_stdlog, "  failed to insert: %s\n", e.message);
+        fprintf_unfiltered (gdb_stdlog, "  failed to insert: %s\n", e.what());
       *bp_excpt = e;
     }
-  END_CATCH
 
   if (bp_excpt->reason != 0)
     {

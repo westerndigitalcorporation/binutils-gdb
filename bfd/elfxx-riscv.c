@@ -930,6 +930,21 @@ static reloc_howto_type howto_table[] =
 	 0,				/* src_mask */
 	 ENCODE_ITYPE_IMM (-1U),	/* dst_mask */
 	 FALSE),			/* pcrel_offset */
+
+  /* 32-bit overlay PLT address.  */
+  HOWTO (R_RISCV_OVLPLT32,			/* type */
+	 0,				/* rightshift */
+	 2,				/* size */
+	 32,				/* bitsize */
+	 FALSE,				/* pc_relative */
+	 0,				/* bitpos */
+	 complain_overflow_dont,	/* complain_on_overflow */
+	 bfd_elf_generic_reloc,		/* special_function */
+	 "R_RISCV_OVLPLT32",		/* name */
+	 FALSE,				/* partial_inplace */
+	 0,				/* src_mask */
+	 MINUS_ONE,			/* dst_mask */
+	 FALSE),			/* pcrel_offset */
 };
 
 /* A mapping from BFD reloc types to RISC-V ELF reloc types.  */

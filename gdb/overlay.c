@@ -15,13 +15,12 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
-#include "config.h"
 #include "defs.h"
 
-#include "common/gdb_unique_ptr.h"
+#include "gdbsupport/gdb_unique_ptr.h"
 #include "symfile.h"
 #include "overlay.h"
-#include "common/errors.h"
+#include "gdbsupport/errors.h"
 
 #include <cstdio>
 

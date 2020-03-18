@@ -49,6 +49,13 @@
 
 #include <algorithm>
 
+#include "overlay.h"
+#include "riscv-tdep.h"
+#include "gdbcmd.h"
+
+/* Debugging for the ComRV frame unwind information.  */
+static unsigned int dwarf_comrv_debug = 0;
+
 struct comp_unit;
 
 /* Call Frame Information (CFI).  */
@@ -965,6 +972,13 @@ struct dwarf2_frame_cache
      dwarf2_tailcall_frame_unwind unwinder so this field does not apply for
      them.  */
   void *tailcall_cache;
+
+  /* The following fields are ComRV related.  When the unwinding is done
+     fully in Python code then hopefully these changes should not be
+     needed.  */
+  bool returns_through_comrv;
+  bool prev_t3_valid_p;
+  CORE_ADDR prev_t3;
 };
 
 static struct dwarf2_frame_cache *
@@ -1225,9 +1239,23 @@ dwarf2_frame_this_id (struct frame_info *this_frame, void **this_cache,
     (*this_id) = frame_id_build (cache->cfa, get_frame_func (this_frame));
 }
 
+struct comrv_stack_entry
+{
+  comrv_stack_entry (CORE_ADDR addr)
+  {
+    read_memory (addr, (gdb_byte *) &ra, 4);
+    read_memory (addr + 4,  (gdb_byte *) &token, 4);
+    read_memory (addr + 8,  (gdb_byte *) &offset, 2);
+  }
+
+  CORE_ADDR ra = 0;
+  CORE_ADDR token = 0;
+  int16_t offset = 0;
+};
+
 static struct value *
-dwarf2_frame_prev_register (struct frame_info *this_frame, void **this_cache,
-			    int regnum)
+dwarf2_frame_prev_register_1 (struct frame_info *this_frame, void **this_cache,
+                              int regnum)
 {
   struct gdbarch *gdbarch = get_frame_arch (this_frame);
   struct dwarf2_frame_cache *cache =
@@ -1243,7 +1271,7 @@ dwarf2_frame_prev_register (struct frame_info *this_frame, void **this_cache,
   if (cache->tailcall_cache)
     {
       struct value *val;
-      
+
       val = dwarf2_tailcall_prev_register_first (this_frame,
 						 &cache->tailcall_cache,
 						 regnum);
@@ -1318,6 +1346,187 @@ dwarf2_frame_prev_register (struct frame_info *this_frame, void **this_cache,
     default:
       internal_error (__FILE__, __LINE__, _("Unknown register rule."));
     }
+}
+
+static struct value *
+dwarf2_frame_prev_register (struct frame_info *this_frame, void **this_cache,
+                            int regnum)
+{
+  struct value *val
+    = dwarf2_frame_prev_register_1 (this_frame, this_cache, regnum);
+
+  int t3_regnum = RISCV_ZERO_REGNUM + 28;
+
+  /* TODO: We should be looking up this symbol (comrv_ret_from_callee) in
+     the symbol table, and the overlay manager class should be responsible
+     for which symbol is being looked up, it certainly shouldn't be hard
+     coded in any way into the code.  */
+  CORE_ADDR comrv_return_addr = 0x20400972;
+  if (regnum == RISCV_PC_REGNUM)
+    {
+      struct dwarf2_frame_cache *cache =
+        dwarf2_frame_cache (this_frame, this_cache);
+
+      if (dwarf_comrv_debug > 0)
+        fprintf_unfiltered (gdb_stdlog,
+                            "Accessing previous $pc in frame %d (cache %p)\n",
+                            frame_relative_level (this_frame), cache);
+
+      /* We need to check to see if the return address is the entry point
+         back into ComRV, if it is then we need to compute a replacement
+         value, one that is based on reading the return address from the
+         ComRV stack.  */
+      if (value_as_address (val) == comrv_return_addr)
+        {
+          /* Record that this frame returns through ComRV.  */
+          cache->returns_through_comrv = true;
+
+          /* Grab the value of register $t3 is this frame.  */
+          CORE_ADDR val_t3 = address_from_register (t3_regnum,
+                                                    this_frame);
+
+          /* Now read the first entry from the ComRV stack.  */
+          comrv_stack_entry stack_entry (val_t3);
+
+          if (dwarf_comrv_debug > 0)
+            {
+              fprintf_unfiltered (gdb_stdlog,
+                                  "Comrv stack pointer is: %s\n",
+                                  core_addr_to_string (val_t3));
+              fprintf_unfiltered (gdb_stdlog,
+                                  "Return address at the top of ComRV stack is %s\n",
+                                  core_addr_to_string (stack_entry.ra));
+            }
+
+          while (stack_entry.ra == comrv_return_addr)
+            {
+              if (stack_entry.offset == 0xdead)
+                error (_("hit top of comrv stack"));
+
+              val_t3 += stack_entry.offset;
+              struct comrv_stack_entry tmp (val_t3);
+              stack_entry = tmp;
+
+              if (dwarf_comrv_debug > 0)
+                fprintf_unfiltered (gdb_stdlog,
+                                    "    popping entry comrv stack (ra is comrv entry address)\n");
+            }
+
+          if (dwarf_comrv_debug > 0)
+            {
+              fprintf_unfiltered (gdb_stdlog,
+                                  "Comrv stack pointer is: %s\n",
+                                  core_addr_to_string (val_t3));
+              fprintf_unfiltered (gdb_stdlog,
+                                  "Return address at the top of ComRV stack is now %s\n",
+                                  core_addr_to_string (stack_entry.ra));
+            }
+
+          if (stack_entry.ra == 0 && stack_entry.token == 0)
+            error (_("hit top of comrv stack (2)"));
+
+          gdb_assert (stack_entry.ra != comrv_return_addr);
+
+          cache->prev_t3_valid_p = true;
+          cache->prev_t3 = val_t3 + stack_entry.offset;
+
+          if (overlay_manager_is_overlay_cache_address (stack_entry.ra))
+            {
+              /* This is an address within the overlay cache region.  We
+                 need to look in the previous stack frame in order to find
+                 the token so we can figure out if the required group is
+                 still mapped, or mapped in the correct location.  */
+              CORE_ADDR prev_t3 = val_t3 + stack_entry.offset;
+
+              struct comrv_stack_entry next_stack_entry (prev_t3);
+
+              if ((next_stack_entry.token & 0x1) != 0x1)
+                error (_("returning to overlay function, second stack frame token is %s"),
+                       core_addr_to_string (next_stack_entry.token));
+
+              /* Use the token and return address to compute a group-id and
+                 an offset into the group.  Then figure out the unmapped
+                 address for the group, add the return offset, and give
+                 this as the return address.  */
+              int group_id = (next_stack_entry.token >> 1) & 0xffff;
+              int func_offset = (next_stack_entry.token >> 17) & 0x3ff;
+
+              ULONGEST group_size = overlay_manager_get_group_size (group_id);
+
+              ULONGEST group_offset = func_offset + ((stack_entry.ra
+                                                      - func_offset)
+                                                     & (group_size - 1));
+
+              if (dwarf_comrv_debug > 0)
+                {
+                  fprintf_unfiltered (gdb_stdlog,
+                                      "RETURN TO OVERLAY FUNCTION, token: %s (id = %d, offset = %d)\n",
+                                      core_addr_to_string (next_stack_entry.token),
+                                      group_id, func_offset);
+                  fprintf_unfiltered (gdb_stdlog,
+                                      "   Group size is 0x%llx\n",
+                                      ((unsigned long long) group_size));
+                  fprintf_unfiltered (gdb_stdlog,
+                                      "   Group offset 0x%llx\n",
+                                      ((unsigned long long) group_offset));
+                }
+              CORE_ADDR ba
+                = overlay_manager_get_group_unmapped_base_address (group_id);
+              if (dwarf_comrv_debug > 0)
+                fprintf_unfiltered (gdb_stdlog,
+                                    "  Group base: %s\n",
+                                    core_addr_to_string (ba));
+              return frame_unwind_got_constant (this_frame, regnum,
+                                                (ba + group_offset));
+            }
+          else
+            {
+              /* This is a non-overlay function.  We can use the address
+                 directly.  */
+              return frame_unwind_got_constant (this_frame, regnum,
+                                                stack_entry.ra);
+            }
+        }
+      else
+        cache->returns_through_comrv = false;
+    }
+  else if (regnum == t3_regnum)
+    {
+      struct dwarf2_frame_cache *cache =
+        dwarf2_frame_cache (this_frame, this_cache);
+
+      if (dwarf_comrv_debug > 0)
+        fprintf_unfiltered (gdb_stdlog,
+                            "Accessing previous $t3 in frame %d (cache %p)\n",
+                            frame_relative_level (this_frame), cache);
+
+      /* To unwind $t3 we first unwind the $pc.  In all likely hood the
+         $pc will have already been unwound by the time we get here, so
+         this should be a very quick access into the regcache.  When we
+         unwind the $pc we update the cached prev_pc in the frame cache.  */
+      (void) dwarf2_frame_prev_register_1 (this_frame, this_cache,
+                                           RISCV_PC_REGNUM);
+
+      if (cache->returns_through_comrv)
+        {
+          if (dwarf_comrv_debug > 0)
+            fprintf_unfiltered (gdb_stdlog,
+                                "Unwinding $t3 in comrv frame, previous value is %s\n",
+                                core_addr_to_string (cache->prev_t3));
+          gdb_assert (cache->prev_t3_valid_p);
+          return frame_unwind_got_constant (this_frame, regnum, cache->prev_t3);
+        }
+      else
+        {
+          /* No ComRV unwinding needed here.  */
+          if (dwarf_comrv_debug > 0)
+            fprintf_unfiltered (gdb_stdlog,
+                                "Unwinding $t3 in normal frame, previous value is in $t3\n");
+          return frame_unwind_got_register (this_frame, t3_regnum, t3_regnum);
+        }
+    }
+
+  return val;
 }
 
 /* Proxy for tailcall_frame_dealloc_cache for bottom frame of a virtual tail
@@ -2306,6 +2515,16 @@ architecture that doesn't support them will have no effect."),
 			   &set_dwarf_cmdlist,
 			   &show_dwarf_cmdlist);
 
+  add_setshow_zuinteger_cmd ("dwarf-comrv", no_class, &dwarf_comrv_debug, _("\
+Set debugging of the dwarf comrv frame unwinding."), _("\
+Show debugging of the dwarf comrv frame unwinding."), _("\
+When enabled (non-zero) information from the DWARF frame unwinder relating\n\
+to the special actions needed to unwind ComRV frames will be displayed.\n\
+A value of 1 (one) provides basic information.\n\
+A value greater than 1 provides more verbose information."),
+			     NULL,
+			     NULL,
+			     &setdebuglist, &showdebuglist);
 #if GDB_SELF_TEST
   selftests::register_test_foreach_arch ("execute_cfa_program",
 					 selftests::execute_cfa_program_test);

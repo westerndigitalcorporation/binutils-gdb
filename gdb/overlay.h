@@ -122,6 +122,22 @@ public:
     return false;
   }
 
+  /* HACK: This is only needed until we can move the stack unwinding into
+     the Python overlay manager.  Return the size of group GROUP_ID in
+     bytes.  */
+  virtual ULONGEST get_group_size (int group_id)
+  {
+    /* TODO: Should this be an error?  */
+    return 0;
+  }
+
+  /* HACK: Return the unmapped base address for group GROUP_ID.  */
+  virtual CORE_ADDR get_group_unmapped_base_address (int group_id)
+  {
+    /* TODO: Should this be an error?  */
+    return 0;
+  }
+
 private:
   /* When true GDB should reload the overlay manager state at the event
      breakpoint.  */
@@ -183,6 +199,16 @@ extern CORE_ADDR overlay_manager_get_mapped_address_if_possible (CORE_ADDR addr)
 
 extern bool overlay_manager_is_unmapped_overlay_address (CORE_ADDR addr);
 
-extern void _initialize_overlay (void);
+/* Return true if ADDR is within the cache region.  */
+
+extern bool overlay_manager_is_overlay_cache_address (CORE_ADDR addr);
+
+/* Return the size (in bytes) of overlay group GROUP_ID.  */
+
+extern ULONGEST overlay_manager_get_group_size (int group_id);
+
+/* Return the unmapped base address of overlay group GROUP_ID.  */
+
+extern CORE_ADDR overlay_manager_get_group_unmapped_base_address (int group_id);
 
 #endif /* !defined OVERLAY_H */

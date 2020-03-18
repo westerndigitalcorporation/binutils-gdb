@@ -227,6 +227,45 @@ overlay_manager_is_unmapped_overlay_address (CORE_ADDR addr)
   return false;
 }
 
+/* See overlay.h.  */
+
+bool
+overlay_manager_is_overlay_cache_address (CORE_ADDR addr)
+{
+  CORE_ADDR start, end;
+
+  if (registered_overlay_manager != nullptr
+      && registered_overlay_manager->find_cache_region (addr, &start, &end))
+    return true;
+
+  return false;
+}
+
+/* See overlay.h.  */
+
+ULONGEST
+overlay_manager_get_group_size (int group_id)
+{
+  if (registered_overlay_manager == nullptr)
+    /* TODO: Should we throw an error here?  */
+    return 0;
+
+  return registered_overlay_manager->get_group_size (group_id);
+}
+
+/* See overlay.h.  */
+
+CORE_ADDR
+overlay_manager_get_group_unmapped_base_address (int group_id)
+{
+  if (registered_overlay_manager == nullptr)
+    /* TODO: Should we throw an error here?  */
+    return 0;
+
+  return registered_overlay_manager->get_group_unmapped_base_address (group_id);
+}
+
+void _initialize_overlay (void);
 void
 _initialize_overlay (void)
 {

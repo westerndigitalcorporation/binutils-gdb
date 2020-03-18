@@ -1,6 +1,17 @@
 import gdb
 import re
 
+# Set this to True from within GDB to activate debug output from
+# within this file.
+overlay_debug = False
+
+# Print STRING as a debug message if OVERLAY_DEBUG is True.
+def debug (string):
+    if not overlay_debug:
+        return
+
+    print (string)
+
 # Required to make calls to super () work in python2.
 __metaclass__ = type
 
@@ -352,7 +363,7 @@ class ParseComRV (gdb.Command):
 
             def comrv_not_initialised (self):
                 print ("ComRV not yet initialisd:")
-                print ("      %s: %d\n"
+                print ("      %s: %d"
                        % (INIT_SYMBOL,
                           int (gdb.parse_and_eval ("%s" % (INIT_SYMBOL)))))
                 print ("     &%s: 0x%x"
@@ -370,13 +381,13 @@ class MyOverlayManager (gdb.OverlayManager):
     def __init__ (self):
         gdb.OverlayManager.__init__ (self, True)
         ovly_data = overlay_data.fetch ()
-        print ("Setting up Overlay Manager:")
-        print ("Cache:")
-        print ("  Start: 0x%x" % (ovly_data.cache ().start_address ()))
-        print ("    End: 0x%x" % (ovly_data.cache ().end_address ()))
-        print ("Storage:")
-        print ("  Start: 0x%x" % (ovly_data.storage ().start_address ()))
-        print ("    End: 0x%x" % (ovly_data.storage ().end_address ()))
+        debug ("Setting up Overlay Manager:")
+        debug ("Cache:")
+        debug ("  Start: 0x%x" % (ovly_data.cache ().start_address ()))
+        debug ("    End: 0x%x" % (ovly_data.cache ().end_address ()))
+        debug ("Storage:")
+        debug ("  Start: 0x%x" % (ovly_data.storage ().start_address ()))
+        debug ("    End: 0x%x" % (ovly_data.storage ().end_address ()))
         self.set_storage_region (ovly_data.storage ().start_address (),
                                  ovly_data.storage ().end_address ())
         self.set_cache_region (ovly_data.cache ().start_address (),
@@ -386,11 +397,11 @@ class MyOverlayManager (gdb.OverlayManager):
         print ('Destructor called for MyOverlayManager')
 
     def event_symbol_name (self):
-        print "In Python code, event_symbol_name"
+        debug ("In Python code, event_symbol_name")
         return "_ovly_debug_event"
 
     def read_mappings (self):
-        print "In Python code, read_mappings"
+        debug ("In Python code, read_mappings")
 
         # Class to walk the currently mapped overlays and print a summary.
         class print_mapped_overlays (mapped_overlay_group_walker):
@@ -399,11 +410,11 @@ class MyOverlayManager (gdb.OverlayManager):
 
             def visit_mapped_overlay (self, src_addr, dst_addr, length,
                                       cache_index, group_number):
-                print ("Index %d is mapped to group %d"
+                debug ("Index %d is mapped to group %d"
                        % (cache_index, group_number))
-                print ("  SRC: 0x%08x" % (src_addr))
-                print ("  DST: 0x%08x" % (dst_addr))
-                print ("  LEN: 0x%08x" % (length))
+                debug ("  SRC: 0x%08x" % (src_addr))
+                debug ("  DST: 0x%08x" % (dst_addr))
+                debug ("  LEN: 0x%08x" % (length))
                 return True
 
         print_mapped_overlays ()
@@ -424,9 +435,49 @@ class MyOverlayManager (gdb.OverlayManager):
         # its constructor.
         map_overlays (self)
 
-        print "All mappings added"
+        debug ("All mappings added")
 
         return True
+
+    # This is a temporary hack needed to support backtracing.
+    # Ideally, the whole backtracing stack unwind would move into
+    # python, and then this function would not be needed, however, to
+    # do that we will need some serious changes to how GDB's stack
+    # unwinder works.
+    #
+    # For now then we need to expose a mechanism by which we can find
+    # the size of a group given its group ID.
+    def get_group_size (self, id):
+        ovly_data = overlay_data.fetch ()
+        if (not ovly_data.comrv_initialised ()):
+            # Maybe we should through an error in this case?
+            return 0
+
+        group_desc = ovly_data.group (id)
+        tmp = group_desc.size_in_bytes ()
+
+        debug ("APB: Size of group %d is %d" % (id, tmp))
+        return tmp
+
+    # This is a temporary hack needed to support backtracing.
+    # Ideally, the whole backtracing stack unwind would move into
+    # python, and then this function would not be needed, however, to
+    # do that we will need some serious changes to how GDB's stack
+    # unwinder works.
+    #
+    # For now then we need to expose a mechanism by which we can find
+    # the size of a group given its group ID.
+    def get_group_unmapped_base_address (self, id):
+        ovly_data = overlay_data.fetch ()
+        if (not ovly_data.comrv_initialised ()):
+            # Maybe we should through an error in this case?
+            return 0
+
+        group_desc = ovly_data.group (id)
+        tmp = group_desc.base_address ()
+
+        debug ("APB: Base address of group %d is 0x%x" % (id, tmp))
+        return tmp
 
 # Create an instance of the command class.
 ParseComRV ()

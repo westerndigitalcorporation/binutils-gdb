@@ -199,7 +199,7 @@ riscv_ovl_additional_link_map_text (bfd *obfd,
       fprintf (config.map_file, "%-24s= %8li (%6s %s)\n", m->name_list.name,
                memsize, szbuf, suffix);
 
-      s = &lang_output_section_statement.head->output_section_statement;
+      s = &lang_os_list.head->output_section_statement;
       while (s != NULL)
         {
 	  if (s->bfd_section != NULL && s->region == m)
@@ -234,7 +234,7 @@ riscv_ovl_additional_link_map_text (bfd *obfd,
   minfo ("NAME                  START    END        TYPE\n");
   {
     lang_output_section_statement_type *s;
-    s = &lang_output_section_statement.head->output_section_statement;
+    s = &lang_os_list.head->output_section_statement;
     while (s != NULL)
       {
 	if (s->bfd_section != NULL && s->bfd_section->owner == obfd)

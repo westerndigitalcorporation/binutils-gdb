@@ -1348,6 +1348,34 @@ dwarf2_frame_prev_register_1 (struct frame_info *this_frame, void **this_cache,
     }
 }
 
+/* Return the address of the comrv_ret_from_callee label, or 0 if the label
+   can't be found.  The address is only looked up once and cached if
+   found.  */
+static CORE_ADDR
+get_comrv_ret_from_callee_addr (struct frame_info *this_frame)
+{
+  static CORE_ADDR cached_addr = 0;
+  if (cached_addr != 0)
+    return cached_addr;
+
+  struct bound_minimal_symbol msymbol;
+  CORE_ADDR maddr;
+
+  if (symfile_objfile == 0)
+    return 0;
+  msymbol = lookup_minimal_symbol ("comrv_ret_from_callee", NULL,
+                                   symfile_objfile);
+  if (msymbol.minsym == NULL)
+    return 0;
+  /* Make certain that the code, and not descriptor, address is
+     returned.  */
+  maddr = gdbarch_convert_from_func_ptr_addr (get_frame_arch (this_frame),
+					      BMSYMBOL_VALUE_ADDRESS (msymbol),
+					      current_top_target ());
+  cached_addr = maddr;
+  return cached_addr;
+}
+
 static struct value *
 dwarf2_frame_prev_register (struct frame_info *this_frame, void **this_cache,
                             int regnum)
@@ -1357,11 +1385,13 @@ dwarf2_frame_prev_register (struct frame_info *this_frame, void **this_cache,
 
   int t3_regnum = RISCV_ZERO_REGNUM + 28;
 
-  /* TODO: We should be looking up this symbol (comrv_ret_from_callee) in
-     the symbol table, and the overlay manager class should be responsible
-     for which symbol is being looked up, it certainly shouldn't be hard
-     coded in any way into the code.  */
-  CORE_ADDR comrv_return_addr = 0x20400972;
+  /* Get the address of the return entry point in ComRV.  If the address
+     can't be found (indicated by an address of 0 being returned here, then
+     no special processing is required.  */
+  CORE_ADDR comrv_return_addr = get_comrv_ret_from_callee_addr (this_frame);
+  if (comrv_return_addr == 0)
+    return val;
+
   if (regnum == RISCV_PC_REGNUM)
     {
       struct dwarf2_frame_cache *cache =

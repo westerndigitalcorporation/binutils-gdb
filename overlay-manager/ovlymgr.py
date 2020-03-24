@@ -42,6 +42,15 @@ class overlay_data:
         def get_group (self, index):
             return self._groups[index]
 
+        def get_group_count (self):
+            return len (self._groups)
+
+        def get_multi_group (self, index):
+            return self._multi_groups[index]
+
+        def get_multi_group_count (self):
+            return len (self._multi_groups)
+
     # Holds information about a single group.
     class _overlay_group:
         def __init__ (self, base_address, size_in_bytes):
@@ -53,6 +62,15 @@ class overlay_data:
 
         def size_in_bytes (self):
             return self._size_in_bytes
+
+    # Holds information about a single multi-group.
+    class _overlay_multi_group:
+        def __init__ (self, index, tokens):
+            self._index = index
+            self._tokens = tokens
+
+        def tokens (self):
+            return self._tokens
 
     # A class to describe an area of memory.  This serves as a base
     # class for the cache region descriptor, and the storage region
@@ -144,6 +162,15 @@ class overlay_data:
         def group (self, index):
             return self._groups_data.get_group (index)
 
+        def group_count (self):
+            return self._groups_data.get_group_count ()
+
+        def multi_group (self, index):
+            return self._groups_data.get_multi_group (index)
+
+        def multi_group_count (self):
+            return self._groups_data.get_multi_group_count ()
+
         def comrv_initialised (self):
             return (not self._groups_data == None)
 
@@ -175,6 +202,27 @@ class overlay_data:
         offset = OVERLAY_MIN_CACHE_ENTRY_SIZE_IN_BYTES * scaled_offset
         return offset
 
+    # Read a 32-bit overlay token from the multi-group table.  ADDRESS
+    # is the exact address from which the token should be loaded.
+    @staticmethod
+    def _read_overlay_token (address):
+        cmd = "x/1wx 0x%x" % (address)
+        # TODO: Should be using the read_memory method on the inferior
+        # here, but I can't get this to do anything useful.  Need to
+        # figure this out, and at a minimum, improve the
+        # documentation.
+        output = gdb.execute (cmd, False, True)
+        output = output.split ("\n")
+        output = output[-2]
+        if (overlay_data._mem_re == None):
+            overlay_data._mem_re \
+                = re.compile (r"0x[0-9a-f]+:\s+(0x[0-9a-f]+)")
+        m = overlay_data._mem_re.match (output)
+        if (m == None):
+            raise RuntimeError ("failed to parse memory value from %s" % output)
+        token = int (m.group (1), 16)
+        return token
+
     # Load information about all of the groups and multi-groups from the
     # overlay cache tables, and return an instance of an object holding all of
     # this data.
@@ -186,30 +234,79 @@ class overlay_data:
         # Read all of the overlay group offsets from memory, adding
         # entries to the overlay group list as we go.
         table_end = table_start + table_size
-        prev_offset = 0
         grp = 0
+
+        # Read the offset of the very first overlay group.  This
+        # should always be 0, but lets check it anyway.
+        prev_offset \
+            = overlay_data._read_overlay_offset (table_start,
+                                                 table_end,
+                                                 grp)
+        if (prev_offset != 0):
+            raise RuntimeError ("offset of first overlay group is 0x%x not 0"
+                                % (prev_offset))
         while (True):
-            offset \
+            # Read the offset for the start of the next overlay group.
+            next_offset \
                 = overlay_data._read_overlay_offset (table_start,
                                                             table_end,
-                                                            grp)
+                                                            (grp + 1))
 
-            # An offset of 0 indicates the end of the group table, except for
-            # the first entry of course, which represents the overlay tables,
-            # and is always at offset 0.
-            if (grp > 0 and offset == 0):
+            # An offset of 0 indicates the end of the group table.
+            if (next_offset == 0):
                 break
 
             # Calculate the size of this overlay group, and create an
             # object to represent it.
-            size = offset - prev_offset
+            size = next_offset - prev_offset
             groups.append (overlay_data.
-                           _overlay_group (storage_start + offset, size))
+                           _overlay_group (storage_start + prev_offset, size))
             grp += 1
-            prev_offset = offset
+            prev_offset = next_offset
+
+        # The previous loop stopped when the offset of the next group
+        # is zero.  The multi-groups are placed after the overlay
+        # groups, so after ther entry with the 0 offset.  Thus we skip
+        # two entries here.
+        #
+        # TODO: Maybe double check if there's something fun with
+        # alignment that we should be taking into account here.
+        grp += 2
 
         # This is where multi-group tokens should be loaded, but this
         # is not done yet.
+        mg_start = table_start + (2 * grp)
+        mg_end = table_end
+        mg_idx = 0
+        mg_tokens = list ()
+
+        while (mg_start < mg_end):
+            # Read a 32-bit overlay token from the multi-group table.
+            ovly_token = overlay_data._read_overlay_token (mg_start)
+
+            # A token of 0 indicates the end of a multi-group.
+            if (ovly_token == 0):
+                # If this is the first entry in a multi-group then we
+                # have reached the end of all multi-group data, and
+                # we're done.
+                if (len (mg_tokens) == 0):
+                    break
+                # Otherwise, we've reached the end of this
+                # multi-group, but there might be more after this.
+                # Finalise this multi-group, and prepare to parse the
+                # next.
+                else:
+                    multi_groups.append (overlay_data.
+                                         _overlay_multi_group (mg_idx,
+                                                              mg_tokens))
+                    # Now reset ready to read the next multi-group.
+                    mg_idx += 1
+                    mg_member_idx = 0
+                    mg_tokens = list ()
+            # Otherwise a non-zero token is a member of the multi-group.
+            else:
+                mg_tokens.append (ovly_token)
+                mg_start += 4		# The size of one overlay token.
 
         return (overlay_data.
                 _overlay_group_data (groups, multi_groups))
@@ -333,7 +430,8 @@ class mapped_overlay_group_walker:
         return True
 
     # Default implementation of comrv_not_initialised, sub-classes
-    # should override this method.
+    # should override this method.  This is called if
+    # walk_mapped_overlays is called before ComRV is initialised.
     def comrv_not_initialised (self):
         None
 
@@ -347,28 +445,89 @@ class ParseComRV (gdb.Command):
 
     def invoke (self, args, from_tty):
 
+        ovly_data = overlay_data.fetch ()
+        if (not ovly_data.comrv_initialised ()):
+            print ("ComRV not yet initialisd:")
+            print ("      %s: %d"
+                   % (INIT_SYMBOL,
+                      int (gdb.parse_and_eval ("%s" % (INIT_SYMBOL)))))
+            print ("     &%s: 0x%x"
+                   % (INIT_SYMBOL,
+                      int (gdb.parse_and_eval ("&%s" % (INIT_SYMBOL)))))
+            return
+
+        print ("Overlay Regions:")
+        print ("  %-9s%-12s%-12s%-8s" % ("Region", "Start", "End", "Size"))
+        print ("  %-9s0x%-10x0x%-10x0x%-6x"
+               % ("storage",
+                  ovly_data.storage ().start_address (),
+                  ovly_data.storage ().end_address (),
+                  (ovly_data.storage ().end_address () -
+                   ovly_data.storage ().start_address ())))
+        print ("  %-9s0x%-10x0x%-10x0x%-6x"
+               % ("cache",
+                  ovly_data.cache ().start_address (),
+                  ovly_data.cache ().end_address (),
+                  (ovly_data.cache ().end_address () -
+                   ovly_data.cache ().start_address ())))
+        print ("")
+        print ("Overlay groups:")
+        grp_num = 0
+        while (grp_num < ovly_data.group_count ()):
+            grp = ovly_data.group (grp_num)
+            if (grp == None):
+                break
+            if (grp_num == 0):
+                print ("  %-7s%-12s%-12s%-8s" % ("Group", "Start", "End", "Size"))
+            print ("  %-7d0x%-10x0x%-10x0x%-6x"
+                   % (grp_num, grp.base_address (),
+                      (grp.base_address () + grp.size_in_bytes ()),
+                      grp.size_in_bytes ()))
+            grp_num += 1
+        print ("")
+        print ("Overlay multi-groups:")
+        grp_num = 0
+        while (grp_num < ovly_data.multi_group_count ()):
+            mg = ovly_data.multi_group (grp_num)
+            if (grp_num == 0):
+                print ("  %-7s%-12s%-9s%-8s"
+                       % ("", "", "Overlay", "Function"))
+                print ("  %-7s%-12s%-9s%-8s"
+                       % ("Group", "Token", "Group", "Offset"))
+            else:
+                print ("  %-7s%-12s%-9s%-8s"
+                       % ("---", "---", "---", "---"))
+            for token in mg.tokens ():
+                g = (token >> 1) & 0xffff
+                offset = ((token >> 17) & 0x3ff) * 4
+                print ("  %-7d0x%08x  %-9d0x%-8x"
+                       % (grp_num, token, g, offset))
+            grp_num += 1
+        print ("")
+        print ("Current overlay mappings:")
         # Class to walk the currently mapped overlays and print a summary.
         class print_mapped_overlays (mapped_overlay_group_walker):
             def __init__ (self):
+                self._shown_header = False
                 self.walk_mapped_overlays ()
+                if (not self._shown_header):
+                    self.nothing_is_mapped ()
 
             def visit_mapped_overlay (self, src_addr, dst_addr, length,
                                       cache_index, group_number):
-                print ("Index %d is mapped to group %d"
-                       % (cache_index, group_number))
-                print ("  SRC: 0x%08x" % (src_addr))
-                print ("  DST: 0x%08x" % (dst_addr))
-                print ("  LEN: 0x%08x" % (length))
+                if (not self._shown_header):
+                    self._shown_header = True
+                    print ("  %-7s%-9s%-12s%-12s%-8s"
+                           % ("Cache", "Overlay", "Storage", "Cache", ""))
+                    print ("  %-7s%-9s%-12s%-12s%-8s"
+                           % ("Index", "Group", "Addr", "Addr", "Size"))
+
+                print ("  %-7d%-9d0x%-10x0x%-10x0x%-8x"
+                       % (cache_index, group_number, src_addr, dst_addr, length))
                 return True
 
-            def comrv_not_initialised (self):
-                print ("ComRV not yet initialisd:")
-                print ("      %s: %d"
-                       % (INIT_SYMBOL,
-                          int (gdb.parse_and_eval ("%s" % (INIT_SYMBOL)))))
-                print ("     &%s: 0x%x"
-                       % (INIT_SYMBOL,
-                          int (gdb.parse_and_eval ("&%s" % (INIT_SYMBOL)))))
+            def nothing_is_mapped (self):
+                print ("  No overlays groups are currently mapped.")
 
         print_mapped_overlays ()
 
@@ -456,7 +615,7 @@ class MyOverlayManager (gdb.OverlayManager):
         group_desc = ovly_data.group (id)
         tmp = group_desc.size_in_bytes ()
 
-        debug ("APB: Size of group %d is %d" % (id, tmp))
+        debug ("Size of group %d is %d" % (id, tmp))
         return tmp
 
     # This is a temporary hack needed to support backtracing.
@@ -476,7 +635,7 @@ class MyOverlayManager (gdb.OverlayManager):
         group_desc = ovly_data.group (id)
         tmp = group_desc.base_address ()
 
-        debug ("APB: Base address of group %d is 0x%x" % (id, tmp))
+        debug ("Base address of group %d is 0x%x" % (id, tmp))
         return tmp
 
 # Create an instance of the command class.

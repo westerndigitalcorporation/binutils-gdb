@@ -58,6 +58,7 @@
 #include "arch/riscv.h"
 #include "riscv-ravenscar-thread.h"
 #include "overlay.h"
+#include "regset.h"
 
 /* The stack must be 16-byte aligned.  */
 #define SP_ALIGNMENT 16
@@ -3132,6 +3133,296 @@ riscv_gnu_triplet_regexp (struct gdbarch *gdbarch)
   return "riscv(32|64)?";
 }
 
+/* Define the general register mapping.  This follows the same format as the
+   RISC-V linux corefile.  The linux kernel puts the PC at offset 0, gdb puts it
+   at offset 32.  Register x0 is always 0 and can be ignored.  Registers x1 to
+   x31 are in the same place.  */
+
+static const struct regcache_map_entry riscv_gregmap[] =
+{
+  { 1,  RISCV_PC_REGNUM, 0 },
+  { 31, RISCV_RA_REGNUM, 0 }, /* x1 to x31 */
+  { 0 }
+};
+
+/* Define the FP register mapping.  This follows the same format as the RISC-V
+   linux corefile.  The kernel puts the 32 FP regs first, and then FCSR.  */
+
+static const struct regcache_map_entry riscv_fregmap[] =
+{
+  { 32, RISCV_FIRST_FP_REGNUM, 0 },
+  { 1, RISCV_CSR_FCSR_REGNUM, 0 },
+  { 0 }
+};
+
+static struct regcache_map_entry *riscv_csrmap;
+
+/* Define the general register regset.  */
+
+static const struct regset riscv_gregset =
+{
+  riscv_gregmap, regcache_supply_regset, regcache_collect_regset
+};
+
+/* Define the FP register regset.  */
+
+static const struct regset riscv_fregset =
+{
+  riscv_fregmap, regcache_supply_regset, regcache_collect_regset
+};
+
+/* Not constant because CSRs found at runtime.  */
+static struct regset riscv_csrset =
+{
+  riscv_csrmap, regcache_supply_regset, regcache_collect_regset
+};
+
+// Use riscv_csr_feature to complet riscv_csrmap.  */
+
+static void
+riscv_create_csrmap ()
+{
+  int i = 0;
+
+  riscv_csrmap
+    = new struct regcache_map_entry[riscv_csr_feature.registers.size() + 1];
+  for (auto &reg : riscv_csr_feature.registers)
+    {
+      riscv_csrmap[i++] = {1, reg.regnum, 0};
+    }
+  // mark the end of the array
+  riscv_csrmap[i] = {0};
+  riscv_csrset.regmap = riscv_csrmap;
+}
+
+/* Structure for passing information from riscv_collect_thread_registers via an
+   iterator to riscv_collect_regset_section_cb. */
+
+struct riscv_collect_regset_section_cb_data
+{
+  struct gdbarch *gdbarch;
+  const struct regcache *regcache;
+  bfd *obfd;
+  char *note_data;
+  int *note_size;
+  unsigned long lwp;
+  enum gdb_signal stop_signal;
+  int abort_iteration;
+};
+
+/* Callback for iterate_over_regset_sections that records a single regset in the
+   corefile note section.  */
+
+static void
+riscv_collect_regset_section_cb (const char *sect_name, int supply_size,
+				 int collect_size, const struct regset *regset,
+				 const char *human_name, void *cb_data)
+{
+  struct riscv_collect_regset_section_cb_data *data
+    = (struct riscv_collect_regset_section_cb_data *) cb_data;
+  bool variable_size_section = (regset != NULL
+				&& regset->flags & REGSET_VARIABLE_SIZE);
+
+  if (!variable_size_section)
+    gdb_assert (supply_size == collect_size);
+
+  if (data->abort_iteration)
+    return;
+
+  gdb_assert (regset && regset->collect_regset);
+
+  /* This is intentionally zero-initialized by using std::vector, so
+     that any padding bytes in the core file will show as 0.  */
+  std::vector<gdb_byte> buf (collect_size);
+
+  regset->collect_regset (regset, data->regcache, -1, buf.data (),
+			  collect_size);
+
+  /* PRSTATUS still needs to be treated specially.  */
+  if (strcmp (sect_name, ".reg") == 0)
+    data->note_data = (char *) elfcore_write_prstatus
+      (data->obfd, data->note_data, data->note_size, data->lwp,
+       gdb_signal_to_host (data->stop_signal), buf.data ());
+  else
+    data->note_data = (char *) elfcore_write_register_note
+      (data->obfd, data->note_data, data->note_size,
+       sect_name, buf.data (), collect_size);
+
+  if (data->note_data == NULL)
+    data->abort_iteration = 1;
+}
+
+/* Records the thread's register state for the corefile note
+   section.  */
+
+static char *
+riscv_collect_thread_registers (const struct regcache *regcache,
+				ptid_t ptid, bfd *obfd,
+				char *note_data, int *note_size,
+				enum gdb_signal stop_signal)
+{
+  struct gdbarch *gdbarch = regcache->arch ();
+  struct riscv_collect_regset_section_cb_data data;
+
+  data.gdbarch = gdbarch;
+  data.regcache = regcache;
+  data.obfd = obfd;
+  data.note_data = note_data;
+  data.note_size = note_size;
+  data.stop_signal = stop_signal;
+  data.abort_iteration = 0;
+
+  //TODO always tid? ???
+  /* For remote targets the LWP may not be available, so use the TID.  */
+  data.lwp = ptid.lwp ();
+  if (!data.lwp)
+    data.lwp = ptid.tid ();
+
+  gdbarch_iterate_over_regset_sections (gdbarch,
+					riscv_collect_regset_section_cb,
+					&data, regcache);
+  return data.note_data;
+}
+
+struct riscv_corefile_thread_data
+{
+  struct gdbarch *gdbarch;
+  bfd *obfd;
+  char *note_data;
+  int *note_size;
+  enum gdb_signal stop_signal;
+};
+
+/* Records the thread's register state for the corefile note
+   section.  */
+
+static void
+riscv_corefile_thread (struct thread_info *info,
+		       struct riscv_corefile_thread_data *args)
+{
+  struct regcache *regcache;
+
+  regcache = get_thread_arch_regcache (info->inf->process_target (),
+				       info->ptid, args->gdbarch);
+
+  for (int regnum = 0; regnum <= RISCV_LAST_REGNUM; ++regnum)
+    {
+      try
+        {
+          target_fetch_registers (regcache, regnum);
+        }
+      catch (const gdb_exception_error &e)
+        {
+          /* Some registers may be unreadable.  Do not quit dumping
+             in the event that target_fetch_registers fails.  */
+        }
+     }
+
+  args->note_data = riscv_collect_thread_registers
+    (regcache, info->ptid, args->obfd, args->note_data,
+     args->note_size, args->stop_signal);
+}
+
+/* Define hook for core file support.  */
+
+static void
+riscv_iterate_over_regset_sections (struct gdbarch *gdbarch,
+				    iterate_over_regset_sections_cb *cb,
+				    void *cb_data,
+				    const struct regcache *regcache)
+{
+  /* GPRs */
+  cb (".reg", (32 * riscv_isa_xlen (gdbarch)), (32 * riscv_isa_xlen (gdbarch)),
+      &riscv_gregset, NULL, cb_data);
+  /* FPRs - skipped if no floating point registers present */
+  if (riscv_isa_flen (gdbarch) > 0)
+    cb (".reg2",
+        (32 * riscv_isa_flen (gdbarch)) + 4,
+        (32 * riscv_isa_flen (gdbarch)) + 4,
+         &riscv_fregset, NULL, cb_data);
+  //TODO RISC-V currently has one virtual reg "PRIV" which could also be dumped
+  /* CSRs  */
+  int csr_count = riscv_count_csrs (gdbarch);
+  /*TODO Save a list of CSR addresses stored in the corefile.  This is needed
+     because we don't have the target description when reading the core file.
+  */
+  if (csr_count > 0)
+    cb (".reg-riscv-csr", (csr_count * riscv_isa_xlen (gdbarch)),
+        (csr_count * riscv_isa_xlen (gdbarch)),
+         &riscv_csrset, NULL, cb_data);
+}
+
+/* Determine which signal stopped execution.  */
+
+static int
+find_signalled_thread (struct thread_info *info, void *data)
+{
+  if (info->suspend.stop_signal != GDB_SIGNAL_0
+      && info->ptid.pid () == inferior_ptid.pid ())
+    return 1;
+
+  return 0;
+}
+
+// For now this function simply dumps all available registers for each thread
+/* Build the note section for a corefile, and return it in a malloc
+   buffer.  */
+
+static char *
+riscv_make_corefile_notes (struct gdbarch *gdbarch, bfd *obfd, int *note_size)
+{
+  struct riscv_corefile_thread_data thread_args;
+  char *note_data = NULL;
+  struct thread_info *curr_thr, *signalled_thr;
+
+  if (! gdbarch_iterate_over_regset_sections_p (gdbarch))
+    return NULL;
+
+  /* Thread register information.  */
+  try
+    {
+      update_thread_list ();
+    }
+  catch (const gdb_exception_error &e)
+    {
+      exception_print (gdb_stderr, e);
+    }
+
+  /* Like the kernel, prefer dumping the signalled thread first.
+     "First thread" is what tools use to infer the signalled thread.
+     In case there's more than one signalled thread, prefer the
+     current thread, if it is signalled.  */
+  curr_thr = inferior_thread ();
+  if (curr_thr->suspend.stop_signal != GDB_SIGNAL_0)
+    signalled_thr = curr_thr;
+  else
+    {
+      signalled_thr = iterate_over_threads (find_signalled_thread, NULL);
+      if (signalled_thr == NULL)
+	signalled_thr = curr_thr;
+    }
+
+  thread_args.gdbarch = gdbarch;
+  thread_args.obfd = obfd;
+  thread_args.note_data = note_data;
+  thread_args.note_size = note_size;
+  thread_args.stop_signal = signalled_thr->suspend.stop_signal;
+
+  riscv_corefile_thread (signalled_thr, &thread_args);
+  for (thread_info *thr : current_inferior ()->non_exited_threads ())
+    {
+      if (thr == signalled_thr)
+	continue;
+      riscv_corefile_thread (thr, &thread_args);
+    }
+
+  note_data = thread_args.note_data;
+  if (!note_data)
+    return NULL;
+
+  return note_data;
+}
+
 /* Initialize the current architecture based on INFO.  If possible,
    re-use an architecture from ARCHES, which is a list of
    architectures already created during this debugging session.
@@ -3389,6 +3680,11 @@ riscv_gdbarch_init (struct gdbarch_info info,
 
   register_riscv_ravenscar_ops (gdbarch);
 
+  /* Functions for handling corefile generation.  */
+  set_gdbarch_make_corefile_notes (gdbarch, riscv_make_corefile_notes);
+  set_gdbarch_iterate_over_regset_sections
+    (gdbarch, riscv_iterate_over_regset_sections);
+
   return gdbarch;
 }
 
@@ -3544,6 +3840,7 @@ void
 _initialize_riscv_tdep ()
 {
   riscv_create_csr_aliases ();
+  riscv_create_csrmap ();
   riscv_init_reggroups ();
 
   gdbarch_register (bfd_arch_riscv, riscv_gdbarch_init, NULL);

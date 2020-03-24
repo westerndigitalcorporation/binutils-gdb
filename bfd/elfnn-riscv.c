@@ -4249,6 +4249,45 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
 # define PRPSINFO_OFFSET_PR_PSARGS	56
 #endif
 
+/* Write PRSTATUS note into core file.  */
+
+static char *
+riscv_write_core_note (bfd *abfd, char *buf, int *bufsiz, int note_type,
+                       ...)
+{
+  switch (note_type)
+    {
+    default:
+      return NULL;
+
+    case NT_PRPSINFO:
+      BFD_FAIL ();
+      return NULL;
+
+    case NT_PRSTATUS:
+      {
+        char data[PRSTATUS_SIZE];
+        va_list ap;
+        long pid;
+        int cursig;
+        const void *greg;
+
+        va_start (ap, note_type);
+        memset (data, 0, sizeof(data));
+        pid = va_arg (ap, long);
+        bfd_put_32 (abfd, pid, data + PRSTATUS_OFFSET_PR_PID);
+        cursig = va_arg (ap, int);
+        bfd_put_16 (abfd, cursig, data + PRSTATUS_OFFSET_PR_CURSIG);
+        greg = va_arg (ap, const void *);
+        memcpy (data + PRSTATUS_OFFSET_PR_REG, greg,
+                PRSTATUS_SIZE - PRSTATUS_OFFSET_PR_REG - ARCH_SIZE / 8);
+        va_end (ap);
+        return elfcore_write_note (abfd, buf, bufsiz,
+                                   "CORE", note_type, data, sizeof (data));
+      }
+    }
+}
+
 /* Support for core dump NOTE sections.  */
 
 static bfd_boolean
@@ -4359,6 +4398,8 @@ riscv_elf_obj_attrs_arg_type (int tag)
 #define elf_backend_grok_prstatus	     riscv_elf_grok_prstatus
 #define elf_backend_grok_psinfo		     riscv_elf_grok_psinfo
 #define elf_backend_object_p		     riscv_elf_object_p
+#undef  elf_backend_write_core_note
+#define elf_backend_write_core_note          riscv_write_core_note
 #define elf_info_to_howto_rel		     NULL
 #define elf_info_to_howto		     riscv_info_to_howto_rela
 #define bfd_elfNN_bfd_relax_section	     _bfd_riscv_relax_section

@@ -9820,6 +9820,12 @@ elfcore_grok_aarch_pauth (bfd *abfd, Elf_Internal_Note *note)
   return elfcore_make_note_pseudosection (abfd, ".reg-aarch-pauth", note);
 }
 
+static bfd_boolean
+elfcore_grok_riscv_csr (bfd *abfd, Elf_Internal_Note *note)
+{
+  return elfcore_make_note_pseudosection (abfd, ".reg-riscv-csr", note);
+}
+
 #if defined (HAVE_PRPSINFO_T)
 typedef prpsinfo_t   elfcore_psinfo_t;
 #if defined (HAVE_PRPSINFO32_T)		/* Sparc64 cross Sparc32 */
@@ -10420,6 +10426,9 @@ elfcore_grok_note (bfd *abfd, Elf_Internal_Note *note)
 	return elfcore_grok_aarch_pauth (abfd, note);
       else
 	return TRUE;
+
+    case NT_RISCV_CSR:
+      return elfcore_grok_riscv_csr (abfd, note);
 
     case NT_PRPSINFO:
     case NT_PSINFO:

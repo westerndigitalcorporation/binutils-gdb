@@ -6556,7 +6556,7 @@ riscv_elf_overlay_printmap_elfNNlriscv(bfd *obfd,
 	  if (func->multigroup)
 	    token = func->multigroup_token;
 	  else
-	    token = ovltoken (0, 0, func_instance->offset, g_id);
+	    token = ovltoken (0, 0, func_instance->offset / 4, g_id);
 
 	  fprintf (mapfile, "  > %8lx: %-20s (token %08x",
 		   func_instance->offset + start_addr, function, token);

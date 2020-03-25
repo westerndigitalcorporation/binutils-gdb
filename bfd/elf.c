@@ -11791,6 +11791,18 @@ elfcore_write_aarch_pauth (bfd *abfd,
 }
 
 char *
+elfcore_write_riscv_csr (bfd *abfd,
+                         char *buf,
+                         int *bufsiz,
+                         const void *csrs,
+                         int size)
+{
+  const char *note_name = "CORE";
+  return elfcore_write_note (abfd, buf, bufsiz,
+                             note_name, NT_RISCV_CSR, csrs, size);
+}
+
+char *
 elfcore_write_register_note (bfd *abfd,
 			     char *buf,
 			     int *bufsiz,
@@ -11872,6 +11884,8 @@ elfcore_write_register_note (bfd *abfd,
     return elfcore_write_aarch_sve (abfd, buf, bufsiz, data, size);
   if (strcmp (section, ".reg-aarch-pauth") == 0)
     return elfcore_write_aarch_pauth (abfd, buf, bufsiz, data, size);
+  if (strcmp (section, ".reg-riscv-csr") == 0)
+    return elfcore_write_riscv_csr (abfd, buf, bufsiz, data, size);
   return NULL;
 }
 

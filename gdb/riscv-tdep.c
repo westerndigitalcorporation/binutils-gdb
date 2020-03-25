@@ -3323,6 +3323,15 @@ riscv_corefile_thread (struct thread_info *info,
      args->note_size, args->stop_signal);
 }
 
+static int
+riscv_count_csrs (struct gdbarch *gdbarch) {
+  int count = 0;
+  for (auto reg : riscv_csr_feature.registers)
+    if (gdbarch_register_reggroup_p (gdbarch, reg.regnum, all_reggroup))
+      count++;
+  return count;
+}
+
 /* Define hook for core file support.  */
 
 static void

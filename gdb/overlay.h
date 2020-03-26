@@ -91,6 +91,8 @@ public:
      of START and END are untouched and return false.  */
   bool find_cache_region (CORE_ADDR addr, CORE_ADDR *start, CORE_ADDR *end)
   {
+    ensure_region_data_loaded ();
+
     for (const auto &r : m_cache_regions)
       {
         if (r.first <= addr && r.second > addr)
@@ -109,6 +111,8 @@ public:
      of START and END are untouched and return false.  */
   bool find_storage_region (CORE_ADDR addr, CORE_ADDR *start, CORE_ADDR *end)
   {
+    ensure_region_data_loaded ();
+
     for (const auto &r : m_storage_regions)
       {
         if (r.first <= addr && r.second > addr)
@@ -138,10 +142,30 @@ public:
     return 0;
   }
 
+protected:
+
+  /* Overridden by subclasses to load region data.  */
+  virtual void load_region_data (void) = 0;
+
 private:
   /* When true GDB should reload the overlay manager state at the event
      breakpoint.  */
   bool m_reload_on_event;
+
+  /* HACK: This is required to support the region tracking.  When that goes
+     away, hopefully this will go away too.  */
+  bool m_region_data_loaded = false;
+
+  /* HACK: Should be removed eventually.  If the region data has not yet
+     been loaded, then load it.  */
+  void ensure_region_data_loaded (void)
+  {
+    if (!m_region_data_loaded)
+      {
+        load_region_data ();
+        m_region_data_loaded = true;
+      }
+  }
 
   /* The lists of cache and storage regions.  Each is a list of pairs, with
      each pair being a start and end address.

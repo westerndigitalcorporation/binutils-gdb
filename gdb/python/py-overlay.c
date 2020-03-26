@@ -187,6 +187,26 @@ public:
 
 private:
 
+  void load_region_data (void) override
+  {
+    gdb_assert (gdb_python_initialized);
+    gdbpy_enter enter_py (get_current_arch (), current_language);
+
+    PyObject *obj = (PyObject *) m_obj;
+
+    if (debug_overlay)
+      fprintf_unfiltered (gdb_stdlog,
+                          "loading region data from python\n");
+
+    /* The base class gdb.OverlayManager provides a default implementation
+       so this method should always be found.  */
+    static const char *method_name = "get_region_data";
+    if (!PyObject_HasAttrString (obj, method_name))
+      error ("no python method get_region_data");
+
+    gdbpy_ref<> result (PyObject_CallMethod (obj, method_name, NULL));
+  }
+
   void add_mapping (CORE_ADDR src, CORE_ADDR dst, ULONGEST len)
   {
     /* TODO: Maybe we should throw an error in this case rather than just

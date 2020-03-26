@@ -415,6 +415,13 @@ class mapped_overlay_group_walker:
 
                 offset = gdb.parse_and_eval ("g_stComrvCB.stOverlayCache[%d].unProperties.stFields.ucSizeInMinGroupSizeUnits" % (index))
                 offset = int (offset)
+                if (offset == 0):
+                    # Something has gone wrong here.  An overlay
+                    # appears to be mapped, but has 0 size.  Maybe we
+                    # could load the overlay size from the static
+                    # data, after all we do know it.  For now just
+                    # force to 1 so we don't get stuck.
+                    offset = 1
             else:
                 # Found an entry that is not currently mapped.
                 offset = 1
@@ -539,8 +546,18 @@ class ParseComRV (gdb.Command):
 class MyOverlayManager (gdb.OverlayManager):
     def __init__ (self):
         gdb.OverlayManager.__init__ (self, True)
+        # STOP !
+        #
+        # No code should be placed here that assumes the ELF being
+        # debugged is currently loaded.  It is highly likely that this
+        # file is sourced before the ELF being debugged is loaded (for
+        # example in Eclipse) in which case non of the required
+        # symbols will exist.
+        pass
+
+    def get_region_data (self):
         ovly_data = overlay_data.fetch ()
-        debug ("Setting up Overlay Manager:")
+        debug ("Setting up overlay manager region data:")
         debug ("Cache:")
         debug ("  Start: 0x%x" % (ovly_data.cache ().start_address ()))
         debug ("    End: 0x%x" % (ovly_data.cache ().end_address ()))

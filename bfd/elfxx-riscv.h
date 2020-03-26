@@ -111,4 +111,8 @@ char *riscv_grouping_tool;
 char *riscv_grouping_tool_args;
 bfd_vma riscv_ovl_first_group_number;
 bfd_boolean riscv_comrv_debug;
-
+bfd_vma riscv_crc_init;
+bfd_vma riscv_crc_poly;
+bfd_vma riscv_crc_xorout;
+bfd_boolean riscv_crc_refin;
+bfd_boolean riscv_crc_refout;

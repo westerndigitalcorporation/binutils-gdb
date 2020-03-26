@@ -825,6 +825,9 @@ build_current_ovl_section (struct bfd_link_info *info, void **data)
   return TRUE;
 }
 
+/* TODO: Integrate this file (if appropriate)  */
+#include "elfnn-riscv-crc.inc"
+
 /* FIXME: Pass this along.  */
 static void *ovl_cached_data = NULL;
 
@@ -852,19 +855,19 @@ emit_ovl_padding_and_crc_entry (struct ovl_group_list_entry *entry,
   asection *padding_sec = bfd_get_section_by_name (htab->elf.dynobj, group_sec_name);
   BFD_ASSERT(padding_sec != NULL);
 
-  /* Emit the padding into the padding section.  */
+  /* Emit the padding into the padding section. This is copied to the cached
+     data so a CRC can be run over the entire block in one pass.  */
   for (bfd_vma offs = 0; offs < padding_sec->size; offs += 2)
     bfd_put_16 (htab->elf.dynobj, group, padding_sec->contents + offs);
+  memcpy (ovl_cached_data + padding_sec->output_offset, padding_sec->contents,
+          padding_sec->size);
 
   /* Calculate the CRC of the group.  */
-  /* TODO: [TC12], but use libiberty's xcrcr32 as the default.  */
-  unsigned int crc = 0xffffffff;
-  crc = xcrc32(ovl_cached_data + entry->ovlgrpdata_offset,
-               padding_sec->output_offset - entry->ovlgrpdata_offset, crc);
-  /* Also calculate the CRC of the padding. This has to be done in a
-     separate step as currently the padding is not in the same section as
-     the group data.  */
-  crc = xcrc32(padding_sec->contents, padding_sec->size - OVL_CRC_SZ, crc);
+  unsigned int crc;
+  crc = xcrc32_custom(ovl_cached_data + entry->ovlgrpdata_offset,
+		      entry->padded_group_size - OVL_CRC_SZ,
+		      riscv_crc_init, riscv_crc_poly, riscv_crc_xorout,
+		      riscv_crc_refin, riscv_crc_refout);
 
   /* Put the 32-bit CRC at the end after the padding.  */
   bfd_put_32 (info->output_bfd, crc,

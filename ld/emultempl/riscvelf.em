@@ -27,6 +27,25 @@ fragment <<EOF
 
 extern FILE * riscv_grouping_file;
 
+#define DEFAULT_CRC_INIT   0xffffffff
+#define DEFAULT_CRC_POLY   0x04c11db7
+#define DEFAULT_CRC_XOROUT 0x00000000
+#define DEFAULT_CRC_REFIN  FALSE
+#define DEFAULT_CRC_REFOUT FALSE
+
+static void
+elf_riscv_before_parse (void)
+{
+  /* Default initialize the CRC parameters.  */
+  riscv_crc_init   = DEFAULT_CRC_INIT;
+  riscv_crc_poly   = DEFAULT_CRC_POLY;
+  riscv_crc_xorout = DEFAULT_CRC_XOROUT;
+  riscv_crc_refin  = DEFAULT_CRC_REFIN;
+  riscv_crc_refout = DEFAULT_CRC_REFOUT;
+
+  gld${EMULATION_NAME}_before_parse ();
+}
+
 static void
 riscv_elf_before_allocation (void)
 {
@@ -276,6 +295,13 @@ PARSE_AND_LIST_PROLOGUE='
 #define OPTION_GROUPING_TOOL_ARGS	303
 #define OPTION_FIRST_GROUP_NUMBER	304
 #define OPTION_COMRV_DEBUG 		305
+#define OPTION_COMRV_CRC_INIT		306
+#define OPTION_COMRV_CRC_POLY		307
+#define OPTION_COMRV_CRC_XOROUT		308
+#define OPTION_COMRV_CRC_REFIN_ON	309
+#define OPTION_COMRV_CRC_REFIN_OFF	310
+#define OPTION_COMRV_CRC_REFOUT_ON	311
+#define OPTION_COMRV_CRC_REFOUT_OFF	312
 '
 
 PARSE_AND_LIST_LONGOPTS='
@@ -284,6 +310,13 @@ PARSE_AND_LIST_LONGOPTS='
   { "grouping-tool-args", required_argument, NULL, OPTION_GROUPING_TOOL_ARGS },
   { "first-group-number", required_argument, NULL, OPTION_FIRST_GROUP_NUMBER },
   { "comrv-debug",        no_argument,       NULL, OPTION_COMRV_DEBUG },
+  { "comrv-crcinit",      required_argument, NULL, OPTION_COMRV_CRC_INIT },
+  { "comrv-crcpolynomial",required_argument, NULL, OPTION_COMRV_CRC_POLY },
+  { "comrv-crcxorout",    required_argument, NULL, OPTION_COMRV_CRC_XOROUT },
+  { "comrv-crcrefin",     no_argument,       NULL, OPTION_COMRV_CRC_REFIN_ON },
+  { "comrv-crcnorefin",   no_argument,       NULL, OPTION_COMRV_CRC_REFIN_OFF },
+  { "comrv-crcrefout",    no_argument,       NULL, OPTION_COMRV_CRC_REFOUT_ON },
+  { "comrv-crcnorefout",  no_argument,       NULL, OPTION_COMRV_CRC_REFOUT_OFF },
 '
 
 PARSE_AND_LIST_OPTIONS='
@@ -291,6 +324,13 @@ PARSE_AND_LIST_OPTIONS='
   fprintf (file, _("--grouping-tool             Name of the grouping tool command\n"));
   fprintf (file, _("--grouping-tool-args        Arguments to the grouping tool\n"));
   fprintf (file, _("--first-group-number        First group number for autogrouping\n"));
+  fprintf (file, _("--comrv-crcinit             Initilization value used for CRCs\n"));
+  fprintf (file, _("--comrv-crcpolynomial       Polynomial used for ComRV CRCs\n"));
+  fprintf (file, _("--comrv-crcxorout           Final XOR value used for ComRV CRCs\n"));
+  fprintf (file, _("--comrv-crcrefin            Enable input reflection for ComRV CRCs\n"));
+  fprintf (file, _("--comrv-crcnorefin          Disable input reflection for ComRV CRCs\n"));
+  fprintf (file, _("--comrv-crcrefout           Enable output reflection for ComRV CRCs\n"));
+  fprintf (file, _("--comrv-crcnorefout         Disable output reflection for ComRV CRCs\n"));
 '
 
 PARSE_AND_LIST_ARGS_CASES='
@@ -333,8 +373,57 @@ PARSE_AND_LIST_ARGS_CASES='
     case OPTION_COMRV_DEBUG:
       riscv_comrv_debug = TRUE;
       break;
+    case OPTION_COMRV_CRC_INIT:
+      {
+        const char *end;
+        riscv_crc_init = bfd_scan_vma (optarg, &end, 0);
+        if (*end != 0 || riscv_crc_init >= 0xffffffffU)
+          {
+            einfo (_("%P: warning: ignoring invalid ComRV CRC inital value %s\n"),
+                   optarg);
+            riscv_crc_init = DEFAULT_CRC_INIT;
+          }
+      }
+      break;
+    case OPTION_COMRV_CRC_POLY:
+      {
+        const char *end;
+        riscv_crc_poly = bfd_scan_vma (optarg, &end, 0);
+        if (*end != 0 || riscv_crc_poly >= 0xffffffffU)
+          {
+            einfo (_("%P: warning: ignoring invalid ComRV CRC polynomial %s\n"),
+                   optarg);
+            riscv_crc_poly = DEFAULT_CRC_POLY;
+          }
+      }
+      break;
+    case OPTION_COMRV_CRC_XOROUT:
+      {
+        const char *end;
+        riscv_crc_xorout = bfd_scan_vma (optarg, &end, 0);
+        if (*end != 0 || riscv_crc_xorout >= 0xffffffffU)
+          {
+            einfo (_("%P: warning: ignoring invalid ComRV CRC xorout %s\n"),
+                   optarg);
+            riscv_crc_xorout = DEFAULT_CRC_XOROUT;
+          }
+      }
+      break;
+    case OPTION_COMRV_CRC_REFIN_ON:
+      riscv_crc_refin = TRUE;
+      break;
+    case OPTION_COMRV_CRC_REFIN_OFF:
+      riscv_crc_refin = FALSE;
+      break;
+    case OPTION_COMRV_CRC_REFOUT_ON:
+      riscv_crc_refout = TRUE;
+      break;
+    case OPTION_COMRV_CRC_REFOUT_OFF:
+      riscv_crc_refout = FALSE;
+      break;
 '
 
+LDEMUL_BEFORE_PARSE=elf_riscv_before_parse
 LDEMUL_BEFORE_ALLOCATION=riscv_elf_before_allocation
 LDEMUL_AFTER_ALLOCATION=gld${EMULATION_NAME}_after_allocation
 LDEMUL_CREATE_OUTPUT_SECTION_STATEMENTS=riscv_create_output_section_statements

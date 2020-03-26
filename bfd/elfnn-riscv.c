@@ -2318,7 +2318,6 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 		                        "'.ovlinput.` prefix."),
 		                      sec->name);
 		  bfd_set_error (bfd_error_bad_value);
-		  return FALSE;
 		}
 	      else
 		continue;
@@ -2341,7 +2340,6 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	                            "overlay symbol through a relocation."),
 	                            sym_name);
 	      bfd_set_error (bfd_error_bad_value);
-	      return FALSE;
 	    }
 
 	  if (sym_groups == NULL)
@@ -2356,7 +2354,6 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	                            "relocation."),
 	                            sym_name);
 	      bfd_set_error (bfd_error_bad_value);
-	      return FALSE;
 	    }
 
 	  /* If this is in multiple groups, then a multigroup entry needs
@@ -2418,7 +2415,6 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 		    (_("%F%pB: error: Overlay group %d exceeds maximum group size\n"),
 		      output_bfd, (int)func_group_info->id);
 		  bfd_set_error (bfd_error_bad_value);
-		  return FALSE;
 		}
 	    }
 	}

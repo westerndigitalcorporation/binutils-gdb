@@ -3684,15 +3684,16 @@ riscv_gdbarch_init (struct gdbarch_info info,
   set_gdbarch_gcc_target_options (gdbarch, riscv_gcc_target_options);
   set_gdbarch_gnu_triplet_regexp (gdbarch, riscv_gnu_triplet_regexp);
 
+  /* Functions for handling bare metal corefile generation.  These will be
+     overridden by RISC-V Linux targets.  */
+  set_gdbarch_make_corefile_notes (gdbarch, riscv_make_corefile_notes);
+  set_gdbarch_iterate_over_regset_sections
+    (gdbarch, riscv_iterate_over_regset_sections);
+
   /* Hook in OS ABI-specific overrides, if they have been registered.  */
   gdbarch_init_osabi (info, gdbarch);
 
   register_riscv_ravenscar_ops (gdbarch);
-
-  /* Functions for handling corefile generation.  */
-  set_gdbarch_make_corefile_notes (gdbarch, riscv_make_corefile_notes);
-  set_gdbarch_iterate_over_regset_sections
-    (gdbarch, riscv_iterate_over_regset_sections);
 
   return gdbarch;
 }

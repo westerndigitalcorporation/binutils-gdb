@@ -142,6 +142,54 @@ public:
     return 0;
   }
 
+  /* HACK: Ideally this would not be needed in a final version of the
+     overlay system, but right now I'm not sure how to fully move this code
+     into Python.  Maybe it will become clear once everything is working.  */
+  virtual bool has_multi_groups ()
+  {
+    return false;
+  }
+
+  /* HACK: Ideally this would not be needed in the final system, with all
+     of this logic instead moved into Python code.
+
+     If ADDR is with the region of a multi-groups first entry then a
+     vector of all the alternative base addresses (within the storage
+     region) for that multi-group, and update OFFSET to be the offset of
+     ADDR from the start of the primary multi-group range.
+
+     If ADDR is not within a multi-group then return an empty vector and
+     OFFSET is not touched.
+
+     TODO: This will not work for a multi-group containing a single group
+     only.  Though this doesn't make much sense, I don't see why it
+     shouldn't be valid, so we probably need a better API here.  */
+  virtual std::vector<CORE_ADDR> find_multi_group (CORE_ADDR addr, CORE_ADDR *offset)
+  {
+    return {};
+  }
+
+  /* If ADDR is within any address range for any multi-group, then return
+     a modified address within the matching multi-groups primary address
+     range.
+
+     If ADDR is not within any multi-group range then just return ADDR.  */
+  virtual CORE_ADDR map_to_primary_multi_group_addr (CORE_ADDR addr)
+  {
+    return addr;
+  }
+
+  /* Return true if ComRV is compiled with multi-group extensions,
+     otherwise, return false.  */
+  virtual bool is_multi_group_enabled ()
+  {
+    return false;
+  }
+
+  /* Return an overlay group token from the multi-group table, indexing
+     into the table at INDEX.  */
+  virtual CORE_ADDR get_multi_group_table_by_index (int index) = 0;
+
 protected:
 
   /* Overridden by subclasses to load region data.  */
@@ -210,9 +258,16 @@ extern std::vector<CORE_ADDR> overlay_manager_get_mapped_addresses (CORE_ADDR ad
 
 /* If ADDR is an address that was mapped in from an overlay source region,
    then return the corresponding address in the overlay source region,
-   otherwise, return ADDR.  */
+   otherwise, return ADDR.
 
-extern CORE_ADDR overlay_manager_non_overlay_address (CORE_ADDR addr);
+   When RESOLVE_MULTI_GROUP_P is true, then not only will ADDR be
+   converted to the cache address, but if the resolved address is within a
+   secondary multi-group range it will be converted to the primary
+   multi-group range.  When RESOLVE_MULTI_GROUP_P is false, this is not
+   done and the first cache address is returned.  */
+
+extern CORE_ADDR overlay_manager_non_overlay_address (CORE_ADDR addr,
+                                                      bool resolve_multi_group_p = false);
 
 /* If ADDR is currently mapped in, then return the first mapped address,
    otherwise return ADDR.  */
@@ -234,5 +289,23 @@ extern ULONGEST overlay_manager_get_group_size (int group_id);
 /* Return the unmapped base address of overlay group GROUP_ID.  */
 
 extern CORE_ADDR overlay_manager_get_group_unmapped_base_address (int group_id);
+
+/* Return TRUE if there is any multi-groups in use.  */
+
+extern bool overlay_manager_has_multi_groups ();
+
+/* If ADDR is within the primary function region of a multi-group then
+   return the multi-group number (0 or more), otherwise return -1.  */
+
+extern std::vector<CORE_ADDR> overlay_manager_find_multi_group (CORE_ADDR addr, CORE_ADDR *offset);
+
+/* Return true if ComRV is compiled with multi-group extensions, otherwise,
+   return false.  */
+
+extern bool overlay_manager_is_multi_group_enabled ();
+
+/* Get overlay token from multi-group table at INDEX.  */
+
+extern CORE_ADDR overlay_manager_get_multi_group_table_at_index (int index);
 
 #endif /* !defined OVERLAY_H */

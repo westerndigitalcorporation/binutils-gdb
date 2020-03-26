@@ -179,7 +179,8 @@ overlay_manager_is_overlay_breakpoint_loc (struct bp_location *bl)
 /* See overlay.h.  */
 
 CORE_ADDR
-overlay_manager_non_overlay_address (CORE_ADDR addr)
+overlay_manager_non_overlay_address (CORE_ADDR addr,
+                                     bool resolve_multi_group_p)
 {
   CORE_ADDR start, end;
 
@@ -194,7 +195,20 @@ overlay_manager_non_overlay_address (CORE_ADDR addr)
       for (const auto &m : *curr_mappings)
         {
           if (addr >= m.dst && addr < (m.dst + m.len))
-            return m.src + (addr - m.dst);
+            addr = m.src + (addr - m.dst);
+        }
+    }
+
+  if (resolve_multi_group_p)
+    {
+      if (registered_overlay_manager != nullptr
+          && curr_mappings != nullptr
+          && registered_overlay_manager->find_storage_region (addr, &start, &end))
+        {
+          /* If ADDR is within any multi-group address range convert the
+             address to the multi-groups primary address range.  */
+          addr
+            = registered_overlay_manager->map_to_primary_multi_group_addr (addr);
         }
     }
 
@@ -263,6 +277,49 @@ overlay_manager_get_group_unmapped_base_address (int group_id)
     return 0;
 
   return registered_overlay_manager->get_group_unmapped_base_address (group_id);
+}
+
+/* See overlay.h.  */
+
+bool
+overlay_manager_has_multi_groups ()
+{
+  if (registered_overlay_manager == nullptr)
+    return false;
+
+  return registered_overlay_manager->has_multi_groups ();
+}
+
+/* See overlay.h.  */
+
+std::vector<CORE_ADDR>
+overlay_manager_find_multi_group (CORE_ADDR addr, CORE_ADDR *offset)
+{
+  if (registered_overlay_manager == nullptr)
+    return {};
+
+  return registered_overlay_manager->find_multi_group (addr, offset);
+}
+
+bool
+overlay_manager_is_multi_group_enabled ()
+{
+  if (registered_overlay_manager == nullptr)
+    return false;
+
+  return registered_overlay_manager->is_multi_group_enabled ();
+}
+
+/* See overlay.h.  */
+
+CORE_ADDR
+overlay_manager_get_multi_group_table_at_index (int index)
+{
+  if (registered_overlay_manager == nullptr)
+    /* TODO: Should this throw an error?  */
+    return 0;
+
+  return registered_overlay_manager->get_multi_group_table_by_index (index);
 }
 
 void _initialize_overlay (void);

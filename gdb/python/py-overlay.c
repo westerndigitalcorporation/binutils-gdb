@@ -29,6 +29,7 @@
 #define ADD_MAPPING_METHOD "add_mapping"
 #define GET_GROUP_SIZE_METHOD "get_group_size"
 #define GET_GROUP_BASE_ADDR_METHOD "get_group_unmapped_base_address"
+#define GET_MULTI_GROUP_COUNT_METHOD "get_multi_group_count"
 
 #define SET_STORAGE_REGION_METHOD "set_storage_region"
 #define SET_CACHE_REGION_METHOD "set_cache_region"
@@ -185,6 +186,239 @@ public:
       error ("result is not an address (or numeric)");
   }
 
+  CORE_ADDR get_multi_group_table_by_index (int index) override
+  {
+    gdb_assert (gdb_python_initialized);
+    gdbpy_enter enter_py (get_current_arch (), current_language);
+
+    PyObject *obj = (PyObject *) m_obj;
+
+    /* The base class gdb.OverlayManager provides a default implementation
+       so this method should always be found.  */
+    static const char *method_name = "get_multi_group_table_by_index";
+    if (!PyObject_HasAttrString (obj, method_name))
+      /* TODO: Should we throw an error here?  */
+      return 0;
+
+    gdbpy_ref<> idx_obj (PyLong_FromLongLong ((long long) index));
+    if (idx_obj == NULL)
+      /* TODO: Should we throw an error here?  */
+      return 0;
+
+    PyObject *method_obj = PyString_FromString (method_name);
+    gdb_assert (method_name != NULL);
+    gdbpy_ref<> result (PyObject_CallMethodObjArgs (obj, method_obj,
+                                                    idx_obj.get (), NULL));
+    if (result == NULL)
+      error (_("missing result object"));
+
+    if (PyLong_Check (result.get ()))
+      return (CORE_ADDR) PyLong_AsUnsignedLongLong (result.get ());
+    else if (PyInt_Check (result.get ()))
+      return (CORE_ADDR) PyInt_AsLong (result.get ());
+    else
+      error ("result is not an address (or numeric)");
+  }
+
+  /* Check to see if the Python overlay manager has any multi group
+     information, if it does then load it and return true, otherwise,
+     return false.
+
+     Once we have loaded multi-group information then this is cached, and
+     we always return true in the future.  */
+  bool has_multi_groups () override
+  {
+    if (m_multi_group_count >= 0)
+      return m_multi_group_count > 0;
+
+    gdb_assert (gdb_python_initialized);
+    gdbpy_enter enter_py (get_current_arch (), current_language);
+
+    gdb_assert (m_multi_group_count == -1);
+
+    PyObject *obj = (PyObject *) m_obj;
+
+    /* Get the number of multi-groups, the base class has a default
+       implementation of the get_multi_group_count method, so we know this
+       should always exist.  */
+    static const char *method_name = GET_MULTI_GROUP_COUNT_METHOD;
+    gdb_assert (PyObject_HasAttrString (obj, method_name));
+    gdbpy_ref<> result (PyObject_CallMethod (obj, method_name, NULL));
+    if (result == NULL)
+      error ("missing result object");
+
+    LONGEST val;
+    if (PyLong_Check (result.get ()))
+      val = PyLong_AsLongLong (result.get ());
+    else if (PyInt_Check (result.get ()))
+      val = (LONGEST) PyInt_AsLong (result.get ());
+    else
+      error ("result is not numeric");
+    m_multi_group_count = std::max ((LONGEST) -1, val);
+
+    if (m_multi_group_count > 0)
+      {
+        /* Load details of each multi-group.  */
+        static const char *method_name2 = "get_multi_group";
+        if (!PyObject_HasAttrString (obj, method_name2))
+          error ("missing method %s on python overlay manager", method_name2);
+        PyObject *method_obj2 = PyString_FromString (method_name2);
+
+        for (int i = 0; i < m_multi_group_count; ++i)
+          {
+            /* Call into the python code and get back a list of addresses.  */
+            gdbpy_ref<> id_obj (PyLong_FromLongLong ((long long) i));
+            if (id_obj == NULL)
+              error ("failed to create python integer object");
+
+            gdbpy_ref<> lst_obj (PyObject_CallMethodObjArgs (obj, method_obj2,
+                                                             id_obj.get (),
+                                                             NULL));
+            if (lst_obj == NULL)
+              error (_("missing result object"));
+
+            if (!PyList_CheckExact (lst_obj.get ()))
+              error (_("not a list from %s"), method_name2);
+
+            if (debug_overlay)
+              fprintf_unfiltered (gdb_stdlog,
+                                  "Multi-group %d:\n", i);
+
+            multi_group_desc desc;
+            for (int j = 0; j < PyList_Size (lst_obj.get ()); ++j)
+              {
+                gdbpy_ref<> itm (PyList_GetItem (lst_obj.get (), j));
+                CORE_ADDR addr;
+
+                if (PyLong_Check (itm.get ()))
+                  addr = (CORE_ADDR) PyLong_AsUnsignedLongLong (itm.get ());
+                else if (PyInt_Check (itm.get ()))
+                  addr = (CORE_ADDR) PyInt_AsLong (itm.get ());
+                else
+                  error ("result is not an address (or numeric)");
+
+                if (debug_overlay)
+                  fprintf_unfiltered (gdb_stdlog,
+                                      "  (%d) %s\n", j,
+                                      core_addr_to_string (addr));
+
+                if (j == 0)
+                  {
+                    CORE_ADDR start, end;
+
+                    if (!find_pc_partial_function (addr, NULL, &start, &end))
+                      error ("unable to compute function bounds");
+                    if (start != addr)
+                      error ("multi-group address is not start of a function");
+                    if (debug_overlay)
+                      fprintf_unfiltered (gdb_stdlog,
+                                          "    Function: %s -> %s\n",
+                                          core_addr_to_string (start),
+                                          core_addr_to_string (end));
+                    desc.base = start;
+                    desc.len = end - start;
+                  }
+                else
+                  desc.alt_addr.push_back (addr);
+              }
+            m_multi_groups.push_back (desc);
+          }
+      }
+
+    return (m_multi_group_count > 0);
+  }
+
+  /* See overlay.h.  */
+
+  std::vector<CORE_ADDR> find_multi_group (CORE_ADDR addr,
+                                           CORE_ADDR *offset) override
+  {
+    if (m_multi_group_count <= 0)
+      return {};
+
+    for (int i = 0; i < m_multi_group_count; ++i)
+      {
+        if (addr >= m_multi_groups[i].base
+            && addr < (m_multi_groups[i].base + m_multi_groups[i].len))
+          {
+            *offset = addr - m_multi_groups[i].base;
+            return m_multi_groups[i].alt_addr;
+          }
+      }
+
+    return {};
+  }
+
+  /* See overlay.h.  */
+
+  CORE_ADDR map_to_primary_multi_group_addr (CORE_ADDR addr) override
+  {
+    if (m_multi_group_count <= 0)
+      return addr;
+
+    for (int i = 0; i < m_multi_group_count; ++i)
+      {
+        if (addr >= m_multi_groups[i].base
+            && addr < (m_multi_groups[i].base + m_multi_groups[i].len))
+          return addr;
+
+        for (const CORE_ADDR &alt : m_multi_groups[i].alt_addr)
+          {
+            /* ADDR is within an alternative address range for a
+               multi-group, return the equivalent address within the
+               primary address range.  */
+            if (addr >= alt && addr < alt + m_multi_groups[i].len)
+              return m_multi_groups[i].base + (addr - alt);
+          }
+      }
+
+    return addr;
+  }
+
+  /* See overlay.h.  */
+
+  bool is_multi_group_enabled () override
+  {
+    if (m_is_multi_group_enabled)
+      return *m_is_multi_group_enabled;
+
+    gdb_assert (gdb_python_initialized);
+    gdbpy_enter enter_py (get_current_arch (), current_language);
+
+    PyObject *obj = (PyObject *) m_obj;
+
+    /* The base class gdb.OverlayManager provides a default implementation
+       so this method should always be found.  */
+    static const char *method_name = "is_multi_group_enabled";
+    if (!PyObject_HasAttrString (obj, method_name))
+      /* TODO: Should we throw an error here?  */
+      return false;
+
+    gdbpy_ref<> result (PyObject_CallMethod (obj, method_name, NULL));
+    if (result == NULL)
+      error (_("missing result object"));
+
+    /* Answer can be any integer.  A value less than 0 indicates that
+       Python doesn't know (yet) so we reply with false, but don't cache
+       the answer.  An reply greater than 0 indicates we know overlay
+       support is compiled in, and we can cache the answer, while an
+       response of 0 indicates that we know overlay support is not compiled
+       in, and we can cache the answer.  */
+    int answer;
+    if (PyLong_Check (result.get ()))
+      answer = (int) PyLong_AsLongLong (result.get ());
+    else if (PyInt_Check (result.get ()))
+      answer = (int) PyInt_AsLong (result.get ());
+    else
+      error ("result is not numeric");
+
+    if (answer < 0)
+      return false;
+
+    m_is_multi_group_enabled.emplace (answer > 0);
+    return *m_is_multi_group_enabled;
+  }
+
 private:
 
   void load_region_data (void) override
@@ -234,6 +468,29 @@ private:
   /* This vector is non-null only for the duration of read_mappings, and
      is added to by calls to add_mapping.  */
   std::unique_ptr<std::vector<mapping>> m_mappings;
+
+  /* The number of multi-groups.  Initially -1 meaning no information
+     known about multi-groups.  Once ComRV is initialised this will be set
+     to 0 or more.  */
+  int m_multi_group_count = -1;
+
+  struct multi_group_desc
+  {
+    /* The primary address for the function in this multi-group.  */
+    CORE_ADDR base;
+
+    /* The length of this function.  */
+    size_t len;
+
+    /* Alternative addresses for the function in this multi-group.  */
+    std::vector<CORE_ADDR> alt_addr;
+  };
+
+  /* One descriptor for each multi-group.  */
+  std::vector<multi_group_desc> m_multi_groups;
+
+  /* Set when we know if multi-group is compiled into ComRV.  */
+  gdb::optional<bool> m_is_multi_group_enabled;
 };
 
 /* Wrapper around a Python object, provides a mechanism to find the overlay
@@ -309,6 +566,16 @@ static PyObject *
 py_overlay_manager_read_mappings (PyObject *self, PyObject *args)
 {
   Py_RETURN_NONE;
+}
+
+/* Python function which returns the number of multi-groups.  This is the
+   fallback, users should be overriding this method.  If we get here then
+   return zero to indicate that there are no multi-groups.  */
+
+static PyObject *
+py_overlay_manager_get_multi_group_count (PyObject *self, PyObject *args)
+{
+  return PyLong_FromLong (0);
 }
 
 /* Called to register an overlay mapping.  Takes three parameters 'src',
@@ -438,6 +705,8 @@ static PyMethodDef overlay_manager_object_methods[] =
     (PyCFunction) py_overlay_manager_set_cache_region,
     METH_VARARGS | METH_KEYWORDS,
     "Callback to register the location of the cache region."},
+  { GET_MULTI_GROUP_COUNT_METHOD, py_overlay_manager_get_multi_group_count,
+    METH_NOARGS, "Return an integer, the number of multi-groups." },
   { NULL } /* Sentinel.  */
 };
 

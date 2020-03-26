@@ -1241,16 +1241,37 @@ dwarf2_frame_this_id (struct frame_info *this_frame, void **this_cache,
 
 struct comrv_stack_entry
 {
-  comrv_stack_entry (CORE_ADDR addr)
+  static const uint16_t empty = (uint16_t) -1;
+
+  comrv_stack_entry (CORE_ADDR addr, bool is_mg)
   {
     read_memory (addr, (gdb_byte *) &ra, 4);
     read_memory (addr + 4,  (gdb_byte *) &token, 4);
     read_memory (addr + 8,  (gdb_byte *) &offset, 2);
+    read_memory (addr + 10, (gdb_byte *) &align, 2);
+    align *= 512;	/* Scale by minimum group size.  */
+    if (is_mg)
+      {
+        if (offset == 12)
+          {
+            int8_t i;
+            read_memory (addr + 11, (gdb_byte *) &i, 1);
+            mg_index = (uint16_t) ((int16_t) i);
+          }
+        else
+          {
+            int16_t i;
+            read_memory (addr + 14, (gdb_byte *) &i, 2);
+            mg_index = (uint16_t) i;
+          }
+      }
   }
 
   CORE_ADDR ra = 0;
   CORE_ADDR token = 0;
   int16_t offset = 0;
+  int16_t align = 0;
+  uint16_t mg_index = empty;
 };
 
 static struct value *
@@ -1415,8 +1436,10 @@ dwarf2_frame_prev_register (struct frame_info *this_frame, void **this_cache,
           CORE_ADDR val_t3 = address_from_register (t3_regnum,
                                                     this_frame);
 
+          bool is_mg = overlay_manager_is_multi_group_enabled ();
+
           /* Now read the first entry from the ComRV stack.  */
-          comrv_stack_entry stack_entry (val_t3);
+          comrv_stack_entry stack_entry (val_t3, is_mg);
 
           if (dwarf_comrv_debug > 0)
             {
@@ -1434,7 +1457,7 @@ dwarf2_frame_prev_register (struct frame_info *this_frame, void **this_cache,
                 error (_("hit top of comrv stack"));
 
               val_t3 += stack_entry.offset;
-              struct comrv_stack_entry tmp (val_t3);
+              struct comrv_stack_entry tmp (val_t3, is_mg);
               stack_entry = tmp;
 
               if (dwarf_comrv_debug > 0)
@@ -1468,34 +1491,56 @@ dwarf2_frame_prev_register (struct frame_info *this_frame, void **this_cache,
                  still mapped, or mapped in the correct location.  */
               CORE_ADDR prev_t3 = val_t3 + stack_entry.offset;
 
-              struct comrv_stack_entry next_stack_entry (prev_t3);
+              struct comrv_stack_entry next_stack_entry (prev_t3, is_mg);
 
               if ((next_stack_entry.token & 0x1) != 0x1)
                 error (_("returning to overlay function, second stack frame token is %s"),
                        core_addr_to_string (next_stack_entry.token));
 
+              CORE_ADDR token;
+              if (((next_stack_entry.token >> 31) & 0x1) == 0x1)
+                {
+                  if (next_stack_entry.mg_index == comrv_stack_entry::empty)
+                    error ("multi-group stack token with no valid token index");
+                  int idx = next_stack_entry.mg_index;
+                  token
+                    = overlay_manager_get_multi_group_table_at_index (idx);
+                }
+              else
+                token = next_stack_entry.token;
+
               /* Use the token and return address to compute a group-id and
                  an offset into the group.  Then figure out the unmapped
                  address for the group, add the return offset, and give
                  this as the return address.  */
-              int group_id = (next_stack_entry.token >> 1) & 0xffff;
-              int func_offset = (next_stack_entry.token >> 17) & 0x3ff;
+              int group_id = (token >> 1) & 0xffff;
+              int func_offset = (token >> 17) & 0x3ff;
+
+              int alignment = next_stack_entry.align;
 
               ULONGEST group_size = overlay_manager_get_group_size (group_id);
+              /* TODO: This max size can change between builds of ComRV, we
+                 really need to dynamically select the correct value to use
+                 here by looking into the binary.  */
+              static const int max_group_size = 4096;
 
-              ULONGEST group_offset = func_offset + ((stack_entry.ra
-                                                      - func_offset)
-                                                     & (group_size - 1));
+              ULONGEST group_offset
+                = func_offset + ((stack_entry.ra - func_offset - alignment) & (max_group_size - 1));
+
+              // ra offset = (return_address – function_offset – (alignment << LOG_2_MIN_GROUP_SIZE)) & (MAX_GROUP_SIZE-1)
 
               if (dwarf_comrv_debug > 0)
                 {
                   fprintf_unfiltered (gdb_stdlog,
                                       "RETURN TO OVERLAY FUNCTION, token: %s (id = %d, offset = %d)\n",
-                                      core_addr_to_string (next_stack_entry.token),
+                                      core_addr_to_string (token),
                                       group_id, func_offset);
                   fprintf_unfiltered (gdb_stdlog,
                                       "   Group size is 0x%llx\n",
                                       ((unsigned long long) group_size));
+                  fprintf_unfiltered (gdb_stdlog,
+                                      "  Max Group size 0x%llx\n",
+                                      ((unsigned long long) max_group_size));
                   fprintf_unfiltered (gdb_stdlog,
                                       "   Group offset 0x%llx\n",
                                       ((unsigned long long) group_offset));

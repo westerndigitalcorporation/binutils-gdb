@@ -12128,6 +12128,79 @@ force_breakpoint_reinsertion (struct bp_location *bl)
       loc->cond_bytecode.reset ();
     }
 }
+
+/* Called to support ComRV overlay debugging.  This is called when we hit
+   the overlay event breakpoint and can be used to fix up any breakpoints
+   that were created before the overlay manager was in place.  */
+static void
+refresh_multi_group_breakpoints ()
+{
+  struct breakpoint *b;
+
+  ALL_BREAKPOINTS (b)
+  {
+    struct bp_location *bl;
+
+    for (bl = b->loc; bl != NULL; bl = bl->next)
+      {
+        std::vector<CORE_ADDR> grp;
+        CORE_ADDR offset;
+
+        /* We are using bl->address here, if this is an overlay breakpoint,
+           and has already been inserted, then bl->address will point into
+           the cache region, not the storage region, in which case we will
+           not find a matching multi-group.
+
+           However, we don't worry about that here.  If the breakpoint is
+           inserted then we must have already come through this code, in
+           which case we should have already created all of the other
+           multi-group locations (if needed) so we should be good.  */
+        grp = overlay_manager_find_multi_group (bl->address, &offset);
+        if (grp.size () > 0)
+          {
+            if (debug_overlay)
+              fprintf_unfiltered (gdb_stdlog,
+                                  "Breakpoint location at %s is multi-group\n",
+                                  core_addr_to_string (bl->address));
+
+            /* Get all of the base addresses for this multi-group.  */
+            for (const CORE_ADDR &addr : grp)
+              {
+                struct bp_location *tmp;
+
+                for (tmp = b->loc; tmp != NULL; tmp = tmp->next)
+                  {
+                    if (tmp->address == addr + offset)
+                      break;
+                    if (tmp->overlay_target_info.placed_address == addr + offset)
+                      break;
+                  }
+
+                /* If we got to the end of the list then we need to add a
+                   new breakpoint location to this breakpoint.  */
+                if (tmp == NULL)
+                  {
+                    struct symtab_and_line sal;
+
+                    if (debug_overlay)
+                      fprintf_unfiltered (gdb_stdlog,
+                                          "  Adding new location %s\n",
+                                          core_addr_to_string (addr + offset));
+                    sal.pspace = bl->pspace;
+                    sal.pc = addr + offset;
+                    sal.symtab = bl->symtab;
+                    sal.symbol = const_cast<symbol *> (bl->symbol);
+                    sal.line = bl->line_number;
+                    sal.msymbol = const_cast<minimal_symbol *> (bl->msymbol);
+                    sal.objfile = const_cast<objfile *> (bl->objfile);
+                    add_location_to_breakpoint (b, &sal);
+                  }
+              }
+          }
+      }
+  }
+}
+
 /* Called whether new breakpoints are created, or existing breakpoints
    deleted, to update the global location list and recompute which
    locations are duplicate of which.
@@ -12165,6 +12238,9 @@ update_global_location_list (enum ugll_insert_mode insert_mode)
   old_locations_count = bp_locations_count;
   bp_locations = NULL;
   bp_locations_count = 0;
+
+  if (overlay_manager_has_multi_groups ())
+    refresh_multi_group_breakpoints ();
 
   std::sort (old_locations.get (), old_locations.get () + old_locations_count,
 	     bp_location_is_less_than);

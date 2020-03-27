@@ -240,6 +240,13 @@ derive_stack_segment (bfd_vma *bottom, bfd_vma *top)
   /* Save frame pointer of prev-most frame.  */
   *bottom = get_frame_base (fi);
 
+  /* Truncate both addresses to target address length.  This is a workaround
+     get_frame_base returning an extended value vs get_frame_sp returning a
+     truncated value on RISC-V.
+  */
+  *top = address_truncate (target_gdbarch(), *top);
+  *bottom = address_truncate (target_gdbarch(), *bottom);
+
   /* Now canonicalize their order, so that BOTTOM is a lower address
      (as opposed to a lower stack frame).  */
   if (*bottom > *top)

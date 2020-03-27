@@ -3326,9 +3326,10 @@ riscv_iterate_over_regset_sections (struct gdbarch *gdbarch,
      because we don't have the target description when reading the core file.
   */
   if (csr_count > 0)
-    cb (".reg-riscv-csr", (csr_count * riscv_isa_xlen (gdbarch)),
-        (csr_count * riscv_isa_xlen (gdbarch)),
-         &riscv_csrset, NULL, cb_data);
+    cb (".reg-riscv-csr",
+	(riscv_csr_feature.registers.size() * riscv_isa_xlen (gdbarch)),
+	(riscv_csr_feature.registers.size() * riscv_isa_xlen (gdbarch)),
+	 &riscv_csrset, NULL, cb_data);
 }
 
 /* Determine which signal stopped execution.  */

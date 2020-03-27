@@ -482,6 +482,9 @@ extern void gdb_print_host_address_1 (const void *addr, struct ui_file *stream);
 #define gdb_print_host_address(ADDR, STREAM) \
   gdb_print_host_address_1 ((const void *) ADDR, STREAM)
 
+/* Return the address truncated to target address size.  */
+extern CORE_ADDR address_truncate (struct gdbarch *gdbarch, CORE_ADDR addr);
+
 /* Return the address only having significant bits.  */
 extern CORE_ADDR address_significant (gdbarch *gdbarch, CORE_ADDR addr);
 

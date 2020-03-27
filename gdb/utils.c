@@ -2867,8 +2867,8 @@ address_significant (gdbarch *gdbarch, CORE_ADDR addr)
   return addr;
 }
 
-const char *
-paddress (struct gdbarch *gdbarch, CORE_ADDR addr)
+CORE_ADDR
+address_truncate (struct gdbarch *gdbarch, CORE_ADDR addr)
 {
   /* Truncate address to the size of a target address, avoiding shifts
      larger or equal than the width of a CORE_ADDR.  The local
@@ -2883,7 +2883,13 @@ paddress (struct gdbarch *gdbarch, CORE_ADDR addr)
 
   if (addr_bit < (sizeof (CORE_ADDR) * HOST_CHAR_BIT))
     addr &= ((CORE_ADDR) 1 << addr_bit) - 1;
-  return hex_string (addr);
+  return addr;
+}
+
+const char *
+paddress (struct gdbarch *gdbarch, CORE_ADDR addr)
+{
+  return hex_string (address_truncate (gdbarch, addr));
 }
 
 /* This function is described in "defs.h".  */

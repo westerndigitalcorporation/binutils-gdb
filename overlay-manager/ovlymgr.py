@@ -662,4 +662,11 @@ ParseComRV ()
 MyOverlayManager ()
 
 gdb.execute ("overlay auto", False, False)
-gdb.execute ("set remote software-breakpoint-packet off", False, False)
+
+
+# This line is commented out, but left in at the request of WD.
+# Turning this packet off will force GDB to make use of read/write
+# software breakpoints, however, on some targets these don't appear to
+# play well, probably with pipeline caching or some such.
+#
+# gdb.execute ("set remote software-breakpoint-packet off", False, False)

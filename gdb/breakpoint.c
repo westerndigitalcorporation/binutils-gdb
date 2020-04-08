@@ -4034,10 +4034,22 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
      do if this is a hardware breakpoint.  */
   if (mapped_to.size () == 0)
     {
+      if (debug_overlay)
+        fprintf_unfiltered (gdb_stdlog,
+                            "breakpoint location is no longer mapped in\n");
+
       if (bl->loc_type == bp_loc_hardware_breakpoint)
-        error ("failed to remote an overlay hardware breakpoint");
-      /* TODO: Do we need to do anything to mark a software breakpoint as
-         no longer inserted?  */
+        target_remove_hw_breakpoint (bl->gdbarch,
+                                     &bl->target_info);
+      else
+        {
+          /* We can't do anything about software breakpoints, as the
+             location at which the breakpoint was inserted is no longer
+             mapped.  If we tried to remote it we would end up writing the
+             old instruction back into the new mapping, causing code
+             corruption.  Just treat the breakpoint as removed and hope
+             that the target will not get upset.  */
+        }
 
       /* Now that the breakpoint is considered no longer inserted, we must
          reset the bl->address field.  */

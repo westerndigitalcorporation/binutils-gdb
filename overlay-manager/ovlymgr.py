@@ -184,44 +184,37 @@ class overlay_data:
         if ((base_address + 1) >= end_address):
             raise RuntimeError ("out of bounds access while reading offset "
                                 + "table for group %d" % (group_number))
-        cmd = "x/1hx 0x%x" % (base_address)
-        # TODO: Should be using the read_memory method on the inferior
-        # here, but I can't get this to do anything useful.  Need to
-        # figure this out, and at a minimum, improve the
-        # documentation.
-        output = gdb.execute (cmd, False, True)
-        output = output.split ("\n")
-        output = output[-2]
-        if (overlay_data._mem_re == None):
-            overlay_data._mem_re \
-                = re.compile (r"0x[0-9a-f]+:\s+(0x[0-9a-f]+)")
-        m = overlay_data._mem_re.match (output)
-        if (m == None):
-            raise RuntimeError ("failed to parse memory value from %s" % output)
-        scaled_offset = int (m.group (1), 16)
-        offset = OVERLAY_MIN_CACHE_ENTRY_SIZE_IN_BYTES * scaled_offset
-        return offset
+
+        # Read the memory as bytes, and then merge the bytes to get a
+        # 2-byte value.  Bytes are interpreted as little endian.
+        inf = gdb.selected_inferior ()
+        b = inf.read_memory (base_address, 2)
+        shift = 0
+        val = 0
+        for i in range(len(b)):
+            t = ord (b[i])
+            t <<= shift
+            val |= t
+            shift += 8
+
+        return val * OVERLAY_MIN_CACHE_ENTRY_SIZE_IN_BYTES
 
     # Read a 32-bit overlay token from the multi-group table.  ADDRESS
     # is the exact address from which the token should be loaded.
     @staticmethod
     def _read_overlay_token (address):
-        cmd = "x/1wx 0x%x" % (address)
-        # TODO: Should be using the read_memory method on the inferior
-        # here, but I can't get this to do anything useful.  Need to
-        # figure this out, and at a minimum, improve the
-        # documentation.
-        output = gdb.execute (cmd, False, True)
-        output = output.split ("\n")
-        output = output[-2]
-        if (overlay_data._mem_re == None):
-            overlay_data._mem_re \
-                = re.compile (r"0x[0-9a-f]+:\s+(0x[0-9a-f]+)")
-        m = overlay_data._mem_re.match (output)
-        if (m == None):
-            raise RuntimeError ("failed to parse memory value from %s" % output)
-        token = int (m.group (1), 16)
-        return token
+        # Read the memory as bytes, and then merge the bytes to get a
+        # 4-byte value.  Bytes are interpreted as little endian.
+        inf = gdb.selected_inferior ()
+        b = inf.read_memory (address, 4)
+        shift = 0
+        val = 0
+        for i in range(len(b)):
+            t = ord (b[i])
+            t <<= shift
+            val |= t
+            shift += 8
+        return val
 
     # Load information about all of the groups and multi-groups from the
     # overlay cache tables, and return an instance of an object holding all of

@@ -2542,9 +2542,18 @@ insert_overlay_breakpoint_loc (struct bp_location *bl,
     addr = bl->overlay_target_info.placed_address;
 
   if (debug_overlay)
-    fprintf_unfiltered (gdb_stdlog,
-                        "insert_overlay_breakpoint_location at %s\n",
-                        core_addr_to_string (addr));
+    {
+      fprintf_unfiltered (gdb_stdlog,
+                          "insert_overlay_breakpoint_location for bp %d\n",
+                          bl->owner->number);
+      fprintf_unfiltered (gdb_stdlog,
+                          "    bl->address = %s\n",
+                          core_addr_to_string (bl->address));
+      if (addr != bl->address)
+        fprintf_unfiltered (gdb_stdlog,
+                            "    storage area address = %s\n",
+                            core_addr_to_string (addr));
+    }
 
   /* First, figure out if the location of this breakpoint is actually
      mapped in anywhere.  For now we assume that each breakpoint can only
@@ -2570,7 +2579,8 @@ insert_overlay_breakpoint_loc (struct bp_location *bl,
          as removed, and reset its address field.  For now we just spot
          this case and issue an error.  */
       if (!overlay_manager_is_unmapped_overlay_address  (bl->address))
-        error (_("breakpoint is inserted, but no longer mapped"));
+        error (_("breakpoint %d is inserted (%s), but no longer mapped"),
+               bl->owner->number, core_addr_to_string (bl->address));
 
       /* This breakpoint is not mapped in, and is not currently inserted,
          we have no problems here.  */
@@ -2652,6 +2662,11 @@ insert_overlay_breakpoint_loc (struct bp_location *bl,
                             "  success inserting location for b/p %d\n",
                             bl->owner->number);
     }
+
+  fprintf_unfiltered (gdb_stdlog,
+                      "inserted_overlay_breakpoint_location for bp %d at %s\n",
+                      bl->owner->number,
+                      core_addr_to_string (bl->address));
 
   return true;
 }
@@ -4019,7 +4034,8 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
      multiple locations.  */
 
   if (debug_overlay)
-    fprintf_unfiltered (gdb_stdlog, "remove_overlay_breakpoint_location at %s\n",
+    fprintf_unfiltered (gdb_stdlog, "remove_overlay_breakpoint_location (bp %d) at %s\n",
+                        bl->owner->number,
                         core_addr_to_string (bl->address));
 
   std::vector<CORE_ADDR> mapped_to
@@ -12279,8 +12295,9 @@ update_global_location_list (enum ugll_insert_mode insert_mode)
            old_locp < old_locations.get () + old_locations_count;
            old_locp++)
         {
-          fprintf_unfiltered (gdb_stdlog, "\t0x%p: address %s\n",
+          fprintf_unfiltered (gdb_stdlog, "\t0x%p: (bp %d) address %s\n",
                               (*old_locp),
+                              ((*old_locp)->owner->number),
                               core_addr_to_string ((*old_locp)->address));
         }
 
@@ -12291,8 +12308,9 @@ update_global_location_list (enum ugll_insert_mode insert_mode)
            locXp < bp_locations + bp_locations_count;
            locXp++)
         {
-          fprintf_unfiltered (gdb_stdlog, "\t0x%p: address %s\n",
+          fprintf_unfiltered (gdb_stdlog, "\t0x%p: (bp %d) address %s\n",
                               (*locXp),
+                              ((*locXp)->owner->number),
                               core_addr_to_string ((*locXp)->address));
         }
     }

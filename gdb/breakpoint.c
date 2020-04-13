@@ -2604,9 +2604,23 @@ insert_overlay_breakpoint_loc (struct bp_location *bl,
     }
   else
     {
-      gdb_assert (bl->overlay_target_info.placed_address == 0);
-      bl->overlay_target_info.placed_address = bl->address;
-      bl->address = mapped_to[0];
+      struct bp_location **locp = NULL, **loc2p, *loc;
+
+      /* There can be many breakpoint locations pointing at this address.
+         We need to make sure the address field of each is updated so that
+         all of the breakpoints correctly appear to be inserted.  As we are
+         about the modify the address field, we must cache the original
+         value before using the iterator macro.  */
+      CORE_ADDR tmp = bl->address;
+      ALL_BP_LOCATIONS_AT_ADDR (loc2p, locp, tmp)
+        {
+          loc = (*loc2p);
+
+
+          gdb_assert (loc->overlay_target_info.placed_address == 0);
+          loc->overlay_target_info.placed_address = loc->address;
+          loc->address = mapped_to[0];
+        }
     }
 
   bl->target_info.kind = breakpoint_kind (bl, &bl->address);
@@ -4050,6 +4064,8 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
      do if this is a hardware breakpoint.  */
   if (mapped_to.size () == 0)
     {
+      struct bp_location **locp = NULL, **loc2p, *loc;
+
       if (debug_overlay)
         fprintf_unfiltered (gdb_stdlog,
                             "breakpoint location is no longer mapped in\n");
@@ -4067,10 +4083,22 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
              that the target will not get upset.  */
         }
 
-      /* Now that the breakpoint is considered no longer inserted, we must
-         reset the bl->address field.  */
-      bl->address = bl->overlay_target_info.placed_address;
-      bl->overlay_target_info.placed_address = 0;
+      /* There can be many breakpoint locations pointing at this address.
+         We need to make sure the address field of each is reset now that
+         the breakpoint mapping is removed.  As we are about the modify the
+         address field, we must cache the original value before using the
+         iterator macro.  */
+      CORE_ADDR tmp = bl->address;
+      ALL_BP_LOCATIONS_AT_ADDR (loc2p, locp, tmp)
+        {
+          loc = (*loc2p);
+
+          /* Now that the breakpoint is considered no longer inserted, we must
+             reset the bl->address field.  */
+          loc->address = loc->overlay_target_info.placed_address;
+          loc->overlay_target_info.placed_address = 0;
+        }
+
       return 0;
     }
 

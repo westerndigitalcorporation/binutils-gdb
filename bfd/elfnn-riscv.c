@@ -1351,7 +1351,8 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 		(struct riscv_elf_link_hash_entry *) h;
 
 	    /* This symbol must exist in an overlay group.  */
-	    eh->needs_overlay_group = TRUE;
+	    if (eh)
+	      eh->needs_overlay_group = TRUE;
 	  }
 	  break;
 
@@ -2764,6 +2765,10 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
   struct riscv_elf_link_hash_table *htab;
   htab = riscv_elf_hash_table (info);
 
+  /* Return -1 if there is an error with this link.  */
+  if (!entry)
+    return 0xffffffff;
+
   /* Get the group(s) for the symbol.  */
   struct ovl_func_hash_entry *func_groups =
       ovl_func_hash_lookup(&htab->ovl_func_table, entry->root.root.string,
@@ -3892,12 +3897,17 @@ riscv_elf_relocate_section (bfd *output_bfd,
 
 	  if (offset >= next_ovlplt_offset)
 	    {
+	      if (h == NULL)
+		return TRUE;
 	      /* Store the PLT offset for this function in its metadata, this is
 		 used to print the linker map later on.  */
 	      struct ovl_func_hash_entry *func_groups =
 		ovl_func_hash_lookup(&htab->ovl_func_table, h->root.root.string,
 				     FALSE, FALSE);
 	      BFD_ASSERT(func_groups != NULL);
+	      BFD_ASSERT(htab->sovlplt != NULL);
+	      if (func_groups == NULL || htab->sovlplt == NULL)
+		return TRUE;
 	      func_groups->plt_entry = TRUE;
 	      func_groups->plt_offset = offset;
 
@@ -5027,7 +5037,8 @@ riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count,
 	      asection *group_padding_section =
 	          bfd_get_section_by_name (htab->elf.dynobj,
 	                                   group_padding_section_name);
-	      group_padding_section->size += count;
+	      if (group_padding_section)
+		group_padding_section->size += count;
 	    }
 
 	  /* Get any duplicated sections and reduce their size.  */
@@ -6328,8 +6339,12 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 	      asection *isec = bfd_get_section_by_name (htab->elf.dynobj,
 							duplicate_sec_name);
 	      if (isec == NULL)
-		for (ibfd = info->input_bfds; isec == NULL; ibfd = ibfd->link.next)
+		for (ibfd = info->input_bfds; isec == NULL && ibfd != NULL;
+		     ibfd = ibfd->link.next)
 		  isec = bfd_get_section_by_name (ibfd, input_sec_name);
+
+	      if (!isec)
+		continue;
 
 	      if (riscv_comrv_debug)
 		fprintf(stderr, "* Setting '%s' in '%s' to 512byte alignment.\n",

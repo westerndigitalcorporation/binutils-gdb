@@ -848,7 +848,7 @@ emit_ovl_padding_and_crc_entry (struct ovl_group_list_entry *entry,
   BFD_ASSERT(ovl_cached_data != NULL);
 
   /* Load the padding section.  */
-  char group_sec_name[100];
+  char group_sec_name[40];
   sprintf (group_sec_name, ".ovlinput.__internal.padding.%u", group);
   struct bfd_link_info *info = data;
   struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
@@ -864,10 +864,19 @@ emit_ovl_padding_and_crc_entry (struct ovl_group_list_entry *entry,
 
   /* Calculate the CRC of the group.  */
   unsigned int crc;
-  crc = xcrc32_custom(ovl_cached_data + entry->ovlgrpdata_offset,
-		      entry->padded_group_size - OVL_CRC_SZ,
-		      riscv_crc_init, riscv_crc_poly, riscv_crc_xorout,
-		      riscv_crc_refin, riscv_crc_refout);
+
+  /* This shouldn't happen, except in the case of something going wrong
+     previously. Warn if this is the case.  */
+  BFD_ASSERT((entry->ovlgrpdata_offset + entry->padded_group_size) ==
+      (padding_sec->output_offset + padding_sec->size));
+  if ((entry->ovlgrpdata_offset + entry->padded_group_size) !=
+      (padding_sec->output_offset + padding_sec->size))
+    crc = 0;
+  else
+    crc = xcrc32_custom(ovl_cached_data + entry->ovlgrpdata_offset,
+			entry->padded_group_size - OVL_CRC_SZ,
+			riscv_crc_init, riscv_crc_poly, riscv_crc_xorout,
+			riscv_crc_refin, riscv_crc_refout);
 
   /* Put the 32-bit CRC at the end after the padding.  */
   bfd_put_32 (info->output_bfd, crc,
@@ -2791,7 +2800,8 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
 
       /* First find the input section for the first function in this
          group.  */
-      char group_first_input_sec_name[100];
+      char *group_first_input_sec_name;
+      group_first_input_sec_name = malloc(40 + strlen(group_list_entry->first_func));
       sprintf (group_first_input_sec_name,
                ".ovlinput.__internal.duplicate.%lu.%s",
                func_groups->groups->id, group_list_entry->first_func);
@@ -2819,7 +2829,8 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
 
       /* Now find the input section for the target function in this
          group.  */
-      char target_sym_input_sec_name[100];
+      char *target_sym_input_sec_name;
+      target_sym_input_sec_name = malloc(12 + strlen(group_list_entry->first_func));
       sprintf (target_sym_input_sec_name,
                ".ovlinput.%s", entry->root.root.string);
 
@@ -2849,6 +2860,8 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
 	}
       BFD_ASSERT ((offset_into_group % 4) == 0);
 
+      free(target_sym_input_sec_name);
+      free(group_first_input_sec_name);
       return ovltoken(0, from_plt, offset_into_group / 4,
                       func_groups->groups->id);
     }
@@ -2881,7 +2894,8 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
 
 	      /* First find the input section for the first function in this
 	         group.  */
-	      char group_first_input_sec_name[100];
+	      char *group_first_input_sec_name;
+	      group_first_input_sec_name = malloc(40 + strlen(group_list_entry->first_func));
 	      sprintf (group_first_input_sec_name,
 	               ".ovlinput.__internal.duplicate.%lu.%s",
 	               func_group_info->id, group_list_entry->first_func);
@@ -2909,7 +2923,8 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
 
 	      /* Now find the input section for the target function in this
 	         group.  */
-	      char target_sym_input_sec_name[100];
+	      char *target_sym_input_sec_name;
+	      target_sym_input_sec_name = malloc(40 + strlen(entry->root.root.string));
 	      sprintf (target_sym_input_sec_name,
 		       ".ovlinput.__internal.duplicate.%lu.%s",
 	               func_group_info->id, entry->root.root.string);
@@ -2953,6 +2968,8 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
 
 	      BFD_ASSERT ((offset_into_group % 4) == 0);
 
+	      free(target_sym_input_sec_name);
+	      free(group_first_input_sec_name);
 	      token = ovltoken(0, 0, func_group_info->offset / 4,
 	                       func_group_info->id);
 
@@ -4344,7 +4361,8 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 		for (func_group_info = sym_groups->groups->next; func_group_info != NULL;
 		     func_group_info = func_group_info->next)
 		  {
-		    char duplicate_func_name[200];
+		    char *duplicate_func_name;
+		    duplicate_func_name = malloc(40 + strlen(isec->name));
 		    sprintf (duplicate_func_name, ".ovlinput.__internal.duplicate.%lu.%s",
 			     func_group_info->id, isec->name + strlen(".ovlinput."));
 
@@ -4352,6 +4370,7 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 		      fprintf(stderr, "- Copy of %s in group %lu (%s)\n", isec->name,
 			      func_group_info->id, duplicate_func_name);
 		    asection *dup_sec = bfd_get_section_by_name(htab->elf.dynobj, duplicate_func_name);
+		    free(duplicate_func_name);
 		    BFD_ASSERT(dup_sec != NULL);
 
 		    /* Nasty hack: When the .ovlgrps output section is created it
@@ -5027,7 +5046,7 @@ riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count,
 	{
 	  struct ovl_func_group_info *groups;
 	  /* Get the accompanying padding sections and increase their size.  */
-	  char group_padding_section_name[100];
+	  char group_padding_section_name[40];
 	  for (groups = func_entry->groups; groups != NULL;
 	       groups = groups->next)
 	    {
@@ -5042,7 +5061,8 @@ riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count,
 	    }
 
 	  /* Get any duplicated sections and reduce their size.  */
-	  char sym_duplicate_section_name[100];
+	  char *sym_duplicate_section_name;
+	  sym_duplicate_section_name = malloc(40 + strlen(sym_name));
 	  for (groups = func_entry->groups; groups != NULL;
 	       groups = groups->next)
 	    {
@@ -5055,6 +5075,7 @@ riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count,
 	      if (sym_duplicate_section)
 		sym_duplicate_section->size -= count;
 	    }
+	  free(sym_duplicate_section_name);
 	}
     }
 
@@ -6137,7 +6158,8 @@ static bfd_boolean
 riscv_elf_create_ovl_dup_symbol (struct bfd_link_info *info, const char *name,
 				 bfd_vma group, asection *s, bfd_vma size)
 {
-  char symbol_name[100];
+  char *symbol_name;
+  symbol_name = malloc(15 + strlen(name));
   struct bfd_link_hash_entry *bfdh;
   struct elf_link_hash_entry *elfh;
   bfd_boolean res;
@@ -6149,6 +6171,7 @@ riscv_elf_create_ovl_dup_symbol (struct bfd_link_info *info, const char *name,
   res = _bfd_generic_link_add_one_symbol (info, s->owner, symbol_name,
 					  BSF_GLOBAL, s, size, NULL, TRUE,
 					  FALSE, &bfdh);
+  free(symbol_name);
   if (!res)
     return FALSE;
 
@@ -6326,10 +6349,13 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 	{
 	  /* Get the first input section allocated to this group and set
 	     its alignment to 512 bytes.  */
-	  if (group_list_entry->n_functions != 0)
+	  if (group_list_entry->n_functions != 0 && group_list_entry->first_func)
 	    {
-	      char input_sec_name[100];
-	      char duplicate_sec_name[100];
+	      char *input_sec_name;
+	      char *duplicate_sec_name;
+	      input_sec_name = malloc(12 + strlen(group_list_entry->first_func));
+	      duplicate_sec_name = malloc(40 + strlen(group_list_entry->first_func));
+
 	      sprintf (input_sec_name, ".ovlinput.%s", group_list_entry->first_func);
 	      sprintf (duplicate_sec_name, ".ovlinput.__internal.duplicate.%u.%s",
 		       i, group_list_entry->first_func);
@@ -6342,6 +6368,9 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 		for (ibfd = info->input_bfds; isec == NULL && ibfd != NULL;
 		     ibfd = ibfd->link.next)
 		  isec = bfd_get_section_by_name (ibfd, input_sec_name);
+
+	      free(input_sec_name);
+	      free(duplicate_sec_name);
 
 	      if (!isec)
 		continue;
@@ -6361,7 +6390,7 @@ riscv_elf_overlay_hook_elfNNlriscv(struct bfd_link_info *info)
 	  /* It should be the case that there is always padding for the group
 	     SHA?  */
 	  BFD_ASSERT(padding > 0);
-	  char group_sec_name[100];
+	  char group_sec_name[40];
 	  sprintf (group_sec_name, ".ovlinput.__internal.padding.%u", i);
 
 	  if (riscv_comrv_debug)

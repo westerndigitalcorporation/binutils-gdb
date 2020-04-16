@@ -3051,7 +3051,7 @@ find_pc_sect_line (CORE_ADDR pc, struct obj_section *section, int notcurrent)
   const struct blockvector *bv;
   struct bound_minimal_symbol msymbol;
 
-  pc = overlay_manager_non_overlay_address (pc);
+  pc = overlay_manager_cache_to_storage_address (pc);
 
   /* Info on best line seen so far, and where it starts, and its file.  */
 

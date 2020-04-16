@@ -250,37 +250,24 @@ extern void overlay_manager_hit_event_breakpoint (void);
 
 extern bool overlay_manager_is_overlay_breakpoint_loc (struct bp_location *bl);
 
-/* Return a vector of the addresses to which ADDR is currently mapped.
-   The returned vector could have 0 or more entries (including more than
-   1 if ADDR is mapped in multiple times).  */
+/* If ADDR is in the overlay cache region then return the corresponding
+   address from the overlay storage region.  When ADDR is a member of a
+   multi-group and RESOLVE_MULTI_GROUP_P is false then the storage address
+   return is for the precise multi-group member that was mapped in.
+   However, when RESOLVE_MULTI_GROUP_P is true the storage address returned
+   is instead for the multi-group member that has debug information
+   available for it.  Remember, only one multi-group member will have
+   debug, while all the others will not.
 
-extern std::vector<CORE_ADDR> overlay_manager_get_mapped_addresses (CORE_ADDR addr);
+   If ADDR is not in the cache region then just return ADDR.  */
 
-/* If ADDR is an address that was mapped in from an overlay source region,
-   then return the corresponding address in the overlay source region,
-   otherwise, return ADDR.
-
-   When RESOLVE_MULTI_GROUP_P is true, then not only will ADDR be
-   converted to the cache address, but if the resolved address is within a
-   secondary multi-group range it will be converted to the primary
-   multi-group range.  When RESOLVE_MULTI_GROUP_P is false, this is not
-   done and the first cache address is returned.  */
-
-extern CORE_ADDR overlay_manager_non_overlay_address (CORE_ADDR addr,
+extern CORE_ADDR overlay_manager_cache_to_storage_address (CORE_ADDR addr,
                                                       bool resolve_multi_group_p = false);
 
-/* If ADDR is currently mapped in, then return the first mapped address,
-   otherwise return ADDR.  */
+/* If ADDR is a storage area address, and is currently mapped into the
+   cache, then return the cache address, otherwise, return ADDR.  */
 
-extern CORE_ADDR overlay_manager_get_mapped_address_if_possible (CORE_ADDR addr);
-
-/* Return true if ADDR is an address that could be mapped in.  */
-
-extern bool overlay_manager_is_unmapped_overlay_address (CORE_ADDR addr);
-
-/* Return true if ADDR is within the cache region.  */
-
-extern bool overlay_manager_is_overlay_cache_address (CORE_ADDR addr);
+extern CORE_ADDR overlay_manager_get_cache_address_if_mapped (CORE_ADDR addr);
 
 /* Return the size (in bytes) of overlay group GROUP_ID.  */
 
@@ -307,5 +294,27 @@ extern bool overlay_manager_is_multi_group_enabled ();
 /* Get overlay token from multi-group table at INDEX.  */
 
 extern CORE_ADDR overlay_manager_get_multi_group_table_at_index (int index);
+
+/* Return true if ADDRESS is an address within the overlay storage region,
+   otherwise, return false.
+
+   If ADDRESS _is_ within the storage region, and if CACHE_ADDRESS is not
+   NULL, then, if ADDRESS is currently mapped into the cache region, place
+   the mapped address into CACHE_ADDRESS, otherwise, place ADDRESS into
+   CACHE_ADDRESS.  */
+
+extern bool overlay_manager_is_storage_address (CORE_ADDR address,
+                                                CORE_ADDR *cache_address = nullptr);
+
+/* Return true if ADDRESS is an address within the overlay cache region,
+   otherwise, return false.
+
+   If ADDRESS _is_ within the cache region, and if STORAGE_ADDRESS is not
+   NULL, then, place the corresponding storage address into
+   CACHE_ADDRESS.  */
+
+extern bool overlay_manager_is_cache_address (CORE_ADDR address,
+                                              CORE_ADDR *storage_address = nullptr,
+                                              bool resolve_multi_group_p = false);
 
 #endif /* !defined OVERLAY_H */

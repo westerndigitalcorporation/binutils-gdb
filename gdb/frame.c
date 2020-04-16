@@ -2418,7 +2418,7 @@ get_frame_pc_if_available (struct frame_info *frame, CORE_ADDR *pc)
 	throw;
     }
 
-  (*pc) = overlay_manager_non_overlay_address (*pc);
+  (*pc) = overlay_manager_cache_to_storage_address (*pc);
 
   return 1;
 }
@@ -2431,7 +2431,7 @@ get_frame_address_in_block (struct frame_info *this_frame)
   /* A draft address.  */
   CORE_ADDR pc = get_frame_pc (this_frame);
 
-  pc = overlay_manager_non_overlay_address (pc, true);
+  pc = overlay_manager_cache_to_storage_address (pc, true);
 
   struct frame_info *next_frame = this_frame->next;
 

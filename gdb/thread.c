@@ -979,7 +979,7 @@ can_access_registers_thread (thread_info *thread)
 int
 pc_in_thread_step_range (CORE_ADDR pc, struct thread_info *thread)
 {
-  pc = overlay_manager_non_overlay_address (pc);
+  pc = overlay_manager_cache_to_storage_address (pc);
 
   return (pc >= thread->control.step_range_start
 	  && pc < thread->control.step_range_end);

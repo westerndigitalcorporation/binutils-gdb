@@ -259,7 +259,8 @@ gdb_pretty_print_disassembler::pretty_print_insn (const struct disasm_insn *insn
 
     m_insn_stb.clear ();
 
-    pc = overlay_manager_get_mapped_address_if_possible (pc);
+    pc = overlay_manager_get_cache_address_if_mapped (pc);
+
     if (flags & DISASSEMBLY_RAW_INSN)
       {
 	CORE_ADDR end_pc;

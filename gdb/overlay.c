@@ -120,25 +120,6 @@ overlay_manager_hit_event_breakpoint (void)
 
 /* See overlay.h.  */
 
-std::vector<CORE_ADDR>
-overlay_manager_get_mapped_addresses (CORE_ADDR addr)
-{
-  std::vector<CORE_ADDR> results;
-
-  if (curr_mappings != nullptr)
-    {
-      for (const auto &m : *curr_mappings)
-        {
-          if (addr >= m.src && addr < (m.src + m.len))
-            results.push_back (m.dst + (addr - m.src));
-        }
-    }
-
-  return results;
-}
-
-/* See overlay.h.  */
-
 bool
 overlay_manager_is_overlay_breakpoint_loc (struct bp_location *bl)
 {
@@ -166,93 +147,36 @@ overlay_manager_is_overlay_breakpoint_loc (struct bp_location *bl)
                                                                 &start,
                                                                 &end)))
         return true;
-
-      // This is the original logic.  This needs to be moved into a default
-      // overlay manager class.
-      // return (bl->section != nullptr && section_is_overlay (bl->section));
     }
 
   return false;
-
 }
 
 /* See overlay.h.  */
 
 CORE_ADDR
-overlay_manager_non_overlay_address (CORE_ADDR addr,
-                                     bool resolve_multi_group_p)
+overlay_manager_cache_to_storage_address (CORE_ADDR addr,
+                                          bool resolve_multi_group_p)
 {
-  CORE_ADDR start, end;
+  CORE_ADDR storage_addr;
 
-  /* If ADDR is within a cache region then check the current mappings to
-     see if one covers ADDR.  */
-  if (registered_overlay_manager != nullptr
-      && curr_mappings != nullptr
-      && registered_overlay_manager->find_cache_region (addr, &start, &end))
-    {
-      /* Figure out what address this would have been before it was mapped
-         in.  */
-      for (const auto &m : *curr_mappings)
-        {
-          if (addr >= m.dst && addr < (m.dst + m.len))
-            addr = m.src + (addr - m.dst);
-        }
-    }
-
-  if (resolve_multi_group_p)
-    {
-      if (registered_overlay_manager != nullptr
-          && curr_mappings != nullptr
-          && registered_overlay_manager->find_storage_region (addr, &start, &end))
-        {
-          /* If ADDR is within any multi-group address range convert the
-             address to the multi-groups primary address range.  */
-          addr
-            = registered_overlay_manager->map_to_primary_multi_group_addr (addr);
-        }
-    }
-
-  return addr;
+  if (!overlay_manager_is_cache_address (addr, &storage_addr,
+                                         resolve_multi_group_p))
+    storage_addr = addr;
+  return storage_addr;
 }
 
 /* See overlay.h.  */
 
 CORE_ADDR
-overlay_manager_get_mapped_address_if_possible (CORE_ADDR addr)
+overlay_manager_get_cache_address_if_mapped (CORE_ADDR addr)
 {
-  std::vector<CORE_ADDR> addrs
-    = overlay_manager_get_mapped_addresses (addr);
-  if (addrs.size () > 0)
-    return addrs[0];
-  return addr;
-}
+  CORE_ADDR cache_addr;
 
-/* See overlay.h.  */
+  if (!overlay_manager_is_storage_address (addr, &cache_addr))
+    cache_addr = addr;
 
-bool
-overlay_manager_is_unmapped_overlay_address (CORE_ADDR addr)
-{
-  CORE_ADDR start, end;
-
-  if (registered_overlay_manager != nullptr
-      && registered_overlay_manager->find_storage_region (addr, &start, &end))
-    return true;
-
-  return false;
-}
-
-/* See overlay.h.  */
-
-bool
-overlay_manager_is_overlay_cache_address (CORE_ADDR addr)
-{
-  CORE_ADDR start, end;
-
-  if (registered_overlay_manager != nullptr
-      && registered_overlay_manager->find_cache_region (addr, &start, &end))
-    return true;
-
-  return false;
+  return cache_addr;
 }
 
 /* See overlay.h.  */
@@ -320,6 +244,92 @@ overlay_manager_get_multi_group_table_at_index (int index)
     return 0;
 
   return registered_overlay_manager->get_multi_group_table_by_index (index);
+}
+
+/* See overlay.h.  */
+
+bool overlay_manager_is_storage_address (CORE_ADDR address,
+                                         CORE_ADDR *cache_address)
+{
+  CORE_ADDR start, end;
+
+  if (registered_overlay_manager != nullptr
+      && registered_overlay_manager->find_storage_region (address, &start, &end))
+    {
+      if (cache_address != nullptr)
+        {
+          unsigned count = 0;
+
+          if (curr_mappings != nullptr)
+            {
+              for (const auto &m : *curr_mappings)
+                {
+                  if (address >= m.src && address < (m.src + m.len))
+                    {
+                      ++count;
+                      *cache_address = m.dst + (address - m.src);
+                    }
+                }
+            }
+
+          if (count == 0)
+            *cache_address = address;
+          else if (count > 1)
+            error (_("storage address %s is mapped multiple times"),
+                   core_addr_to_string (address));
+        }
+
+      return true;
+    }
+
+  return false;
+}
+
+/* See overlay.h.  */
+
+bool overlay_manager_is_cache_address (CORE_ADDR address,
+                                       CORE_ADDR *storage_address,
+                                       bool resolve_multi_group_p)
+{
+  CORE_ADDR start, end;
+
+  /* If ADDRESS is within a cache region then check the current mappings to
+     see if one covers ADDRESS.  */
+  if (registered_overlay_manager != nullptr
+      && curr_mappings != nullptr
+      && registered_overlay_manager->find_cache_region (address, &start, &end))
+    {
+      if (storage_address != nullptr)
+        {
+          unsigned count = 0;
+          CORE_ADDR tmp;
+
+          /* Figure out what address this would have been before it was
+             mapped in.  */
+          for (const auto &m : *curr_mappings)
+            {
+              if (address >= m.dst && address < (m.dst + m.len))
+                {
+                  ++count;
+                  tmp = m.src + (address - m.dst);
+                }
+            }
+
+          if (count > 1)
+            error (_("multiple mappings for cache address %s"),
+                   core_addr_to_string (address));
+          else if (count == 1 && resolve_multi_group_p)
+            tmp = registered_overlay_manager->map_to_primary_multi_group_addr (tmp);
+          else if (count == 0)
+            tmp = address;
+
+          *storage_address = tmp;
+        }
+
+      return true;
+    }
+
+  return false;
 }
 
 void _initialize_overlay (void);

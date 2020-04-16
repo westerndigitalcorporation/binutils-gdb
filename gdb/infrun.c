@@ -7311,7 +7311,7 @@ process_event_stop_test (struct execution_control_state *ecs)
 
   bool refresh_step_info = true;
   CORE_ADDR stop_pc = ecs->event_thread->suspend.stop_pc;
-  stop_pc = overlay_manager_non_overlay_address (stop_pc);
+  stop_pc = overlay_manager_cache_to_storage_address (stop_pc);
   if ((stop_pc == stop_pc_sal.pc)
       && (ecs->event_thread->current_line != stop_pc_sal.line
  	  || ecs->event_thread->current_symtab != stop_pc_sal.symtab))

@@ -3042,7 +3042,7 @@ riscv_read_pc (readable_regcache *regcache)
 
   regcache->cooked_read (gdbarch_pc_regnum (regcache->arch ()), &tmp);
   pc = (CORE_ADDR) tmp;
-  pc = overlay_manager_non_overlay_address (pc);
+  pc = overlay_manager_cache_to_storage_address (pc);
 
   return pc;
 }

@@ -2441,107 +2441,34 @@ insert_non_overlay_breakpoint_loc (struct bp_location *bl,
     }
 }
 
-#if 0
-
-/* Insert BL which is the location of an overlay breakpoint.    If
-   anything goes wrong then update BP_EXCPT, otherwise don't touch
-   BP_EXCPT.  */
-
-static bool
-insert_overlay_breakpoint_loc (struct bp_location *bl,
-                               struct ui_file *tmp_error_stream,
-                               gdb_exception *bp_excpt)
-{
-  /* This breakpoint is in an overlay section.
-     Shall we set a breakpoint at the LMA?  */
-  if (!overlay_events_enabled)
-    {
-      /* Yes -- overlay event support is not active, 
-         so we must try to set a breakpoint at the LMA.
-         This will not work for a hardware breakpoint.  */
-      if (bl->loc_type == bp_loc_hardware_breakpoint)
-        warning (_("hardware breakpoint %d not supported in overlay!"),
-                 bl->owner->number);
-      else
-        {
-          CORE_ADDR addr = overlay_unmapped_address (bl->address,
-                                                     bl->section);
-          /* Set a software (trap) breakpoint at the LMA.  */
-          bl->overlay_target_info = bl->target_info;
-          bl->overlay_target_info.reqstd_address = addr;
-
-          /* No overlay handling: just set the breakpoint.  */
-          TRY
-            {
-              int val;
-
-              bl->overlay_target_info.kind
-                = breakpoint_kind (bl, &addr);
-              bl->overlay_target_info.placed_address = addr;
-              val = target_insert_breakpoint (bl->gdbarch,
-                                              &bl->overlay_target_info);
-              if (val)
-                *bp_excpt = gdb_exception {RETURN_ERROR, GENERIC_ERROR};
-            }
-          CATCH (e, RETURN_MASK_ALL)
-            {
-              *bp_excpt = e;
-            }
-          END_CATCH
-
-          if (bp_excpt->reason != 0)
-            fprintf_unfiltered (tmp_error_stream,
-                                "Overlay breakpoint %d "
-                                "failed: in ROM?\n",
-                                bl->owner->number);
-        }
-    }
-  /* Shall we set a breakpoint at the VMA? */
-  if (section_is_mapped (bl->section))
-    {
-      /* Yes.  This overlay section is mapped into memory.  */
-      TRY
-        {
-          int val;
-
-          val = bl->owner->ops->insert_location (bl);
-          if (val)
-            *bp_excpt = gdb_exception {RETURN_ERROR, GENERIC_ERROR};
-        }
-      CATCH (e, RETURN_MASK_ALL)
-        {
-          *bp_excpt = e;
-        }
-      END_CATCH
-    }
-  else
-    {
-      /* No.  This breakpoint will not be inserted.
-         No error, but do not mark the bp as 'inserted'.  */
-      return false;
-    }
-
-  return true;
-}
-
-#else
-
 /* Insert BL which is the location of an overlay breakpoint.    If
    anything goes wrong then update BP_EXCPT, otherwise don't touch
    BP_EXCPT.
 
-   This is a new version of this function for use with the Everest overlay
-   manager.  */
+   This function is specific for ComRV, and entirely replaces the code that
+   used to exist within GDB for the old style overlay manager.  If we ever
+   want to support something like this upstream then we're going to have
+   to find a way for the old code and this new code to co-exist.  */
 
 static bool
 insert_overlay_breakpoint_loc (struct bp_location *bl,
                                struct ui_file *tmp_error_stream,
                                gdb_exception *bp_excpt)
 {
-  /* Find the original, non-mapped address for this overlay.  */
-  CORE_ADDR addr = bl->address;
-  if (!overlay_manager_is_unmapped_overlay_address  (bl->address))
-    addr = bl->overlay_target_info.placed_address;
+  /* Find the storage area address for this breakpoint location.  If the
+     location has not yet been inserted then the storage area address will
+     be in the ADDRESS field of the location.  If the location has been
+     inserted then the ADDRESS field will now be the cache area address,
+     and the original storage area address will have been backed up
+     elsewhere.  */
+  CORE_ADDR cache_addr, storage_addr;
+  if (overlay_manager_is_storage_address (bl->address, &cache_addr))
+    storage_addr = bl->address;
+  else
+    {
+      cache_addr = bl->address;
+      storage_addr = bl->overlay_target_info.placed_address;
+    }
 
   if (debug_overlay)
     {
@@ -2549,90 +2476,78 @@ insert_overlay_breakpoint_loc (struct bp_location *bl,
                           "insert_overlay_breakpoint_location for bp %d\n",
                           bl->owner->number);
       fprintf_unfiltered (gdb_stdlog,
-                          "    bl->address = %s\n",
+                          "        bl->address = %s\n",
                           core_addr_to_string (bl->address));
-      if (addr != bl->address)
-        fprintf_unfiltered (gdb_stdlog,
-                            "    storage area address = %s\n",
-                            core_addr_to_string (addr));
+      fprintf_unfiltered (gdb_stdlog,
+                          "    storage address = %s\n",
+                          core_addr_to_string (storage_addr));
+      fprintf_unfiltered (gdb_stdlog,
+                          "      cache address = %s\n",
+                          ((cache_addr == storage_addr)
+                           ? "unmapped"
+                           : core_addr_to_string (cache_addr)));
     }
 
-  /* First, figure out if the location of this breakpoint is actually
-     mapped in anywhere.  For now we assume that each breakpoint can only
-     be mapped into a single location, however, this is not true for the
-     everest overlay manager, which can map the same block of code into
-     multiple locations.  */
-  std::vector<CORE_ADDR> mapped_to
-    = overlay_manager_get_mapped_addresses (addr);
+  /* There's one situation that we're not handling yet.  What if the user
+     places a breakpoint directly into the cache address using the address
+     syntax.  This is still something that needs planning out.  */
+  if (cache_addr != 0 && storage_addr == 0)
+    error (_("breakpoint %d location at %s is in cache, but has not "
+             "storage address"),
+           bl->owner->number, core_addr_to_string (cache_addr));
 
-  if (mapped_to.size () > 1)
-    error (_("address %s is mapped to too many locations"),
-           core_addr_to_string (addr));
+  /* If STORAGE_ADDR is not mapped into the cache then CACHE_ADDR will be
+     set equal to STORAGE_ADDR in the call to the overlay manager above.  */
+  if (cache_addr == storage_addr)
+    return false;
 
-  /* This location is not mapped in, so we can't place a breakpoint at the
-     moment.  */
-  if (mapped_to.size () == 0)
-    {
-      if (debug_overlay)
-        fprintf_unfiltered (gdb_stdlog, "  location is not mapped\n");
-
-      /* TODO: It could be that the breakpoint used to be mapped in, but
-         has now been removed.  In this case we need to mark the breakpoint
-         as removed, and reset its address field.  For now we just spot
-         this case and issue an error.  */
-      if (!overlay_manager_is_unmapped_overlay_address  (bl->address))
-        error (_("breakpoint %d is inserted (%s), but no longer mapped"),
-               bl->owner->number, core_addr_to_string (bl->address));
-
-      /* This breakpoint is not mapped in, and is not currently inserted,
-         we have no problems here.  */
-      return false;
-    }
+  /* Sanity check.  This shouldn't be needed, but allows us to catch any
+     errors.  */
+  CORE_ADDR tmp_storage_addr;
+  if (!overlay_manager_is_cache_address (cache_addr, &tmp_storage_addr))
+    error (_("breakpoint %d: cache address %s is not actually in the "
+             "cache area"),
+           bl->owner->number, core_addr_to_string (cache_addr));
+  if (tmp_storage_addr != storage_addr)
+    error (_("breakpoint %d: storage address %s is out of sync with "
+             "current overlay mappings (breakpoint didn't remove correctly?"),
+           bl->owner->number, core_addr_to_string (storage_addr));
 
   /* We know that the breakpoint address is currently mapped in, and is
      mapped to just a single address.  We can now insert the breakpoint.
 
      The core of GDB relies on bl->address containing the actual address at
      which the breakpoint was inserted, so we absolutely have to update
-     this field.  */
+     this field.
 
-  if (!overlay_manager_is_unmapped_overlay_address  (bl->address))
+     There can be many breakpoint locations pointing at this address.
+     We need to make sure the address field of each is updated so that
+     all of the breakpoints correctly appear to be inserted.  */
+  struct bp_location **locp = NULL, **loc2p, *loc;
+  ALL_BP_LOCATIONS_AT_ADDR (loc2p, locp, storage_addr)
     {
-      /* The field has already been updated, but maybe the mapping for this
-         breakpoint has changed.  For now we don't handle this case, but
-         when we hit it, this is where it must be handled.  */
-      if (bl->address != mapped_to[0])
-        error (_("breakpoint mapping has changed"));
-    }
-  else
-    {
-      struct bp_location **locp = NULL, **loc2p, *loc;
+      loc = (*loc2p);
 
-      /* There can be many breakpoint locations pointing at this address.
-         We need to make sure the address field of each is updated so that
-         all of the breakpoints correctly appear to be inserted.  As we are
-         about the modify the address field, we must cache the original
-         value before using the iterator macro.  */
-      CORE_ADDR tmp = bl->address;
-      ALL_BP_LOCATIONS_AT_ADDR (loc2p, locp, tmp)
-        {
-          loc = (*loc2p);
-
-
-          gdb_assert (loc->overlay_target_info.placed_address == 0);
-          loc->overlay_target_info.placed_address = loc->address;
-          loc->address = mapped_to[0];
-        }
+      gdb_assert (loc->overlay_target_info.placed_address == 0);
+      gdb_assert (loc->address == storage_addr);
+      loc->overlay_target_info.placed_address = storage_addr;
+      loc->address = cache_addr;
     }
 
   bl->target_info.kind = breakpoint_kind (bl, &bl->address);
-  bl->target_info.placed_address = bl->address;
-  bl->target_info.reqstd_address = bl->address;
+  bl->target_info.placed_address = cache_addr;
+  bl->target_info.reqstd_address = cache_addr;
+
+  /* It is required that the BP_LOCATIONS list be sorted by the address
+     of the location.  After updating the addresses above we should
+     resort the list now.  */
+  std::sort (bp_locations, bp_locations + bp_locations_count,
+             bp_location_is_less_than);
 
   if (debug_overlay)
     fprintf_unfiltered (gdb_stdlog,
-                        "  inserted at %s, old address backed up\n",
-                        core_addr_to_string (bl->address));
+                        "  all locations updated to cache address %s\n",
+                        core_addr_to_string (cache_addr));
 
   /* No overlay handling: just set the breakpoint.  */
   try
@@ -2656,7 +2571,8 @@ insert_overlay_breakpoint_loc (struct bp_location *bl,
   catch (const gdb_exception &e)
     {
       if (debug_overlay)
-        fprintf_unfiltered (gdb_stdlog, "  failed to insert: %s\n", e.what());
+        fprintf_unfiltered (gdb_stdlog, "  failed to insert: %s\n",
+                            e.what());
       *bp_excpt = e;
     }
 
@@ -2675,7 +2591,7 @@ insert_overlay_breakpoint_loc (struct bp_location *bl,
     {
       if (debug_overlay)
         fprintf_unfiltered (gdb_stdlog,
-                            "  success inserting location for b/p %d\n",
+                            "  success inserting location for bp %d\n",
                             bl->owner->number);
     }
 
@@ -2687,8 +2603,6 @@ insert_overlay_breakpoint_loc (struct bp_location *bl,
 
   return true;
 }
-
-#endif
 
 /* Insert a low-level "breakpoint" of some type.  BL is the breakpoint
    location.  Any error messages are printed to TMP_ERROR_STREAM; and
@@ -3520,15 +3434,15 @@ handle_overlay_bp_event (void)
   target_terminal::scoped_restore_terminal_state term_state;
   target_terminal::ours_for_output ();
 
-  /* Call into the overlay manager to process the event breakpoint.  */
+  /* Call into the overlay manager to process the event breakpoint.  This
+     will update our internal idea of which overlays are mapped in.  */
   overlay_manager_hit_event_breakpoint ();
 
   /* Now we need to ensure that every overlay breakpoint is updated, as its
-     mapping may have changed.
-
-     TODO: Currently we just remove all breakpoints, and then reinsert all
-     breakpoints, but this can certainly be streamlined to only apply for
-     overlay breakpoints.  */
+     mapping may have changed.  Currently we just remove all breakpoints,
+     and then insert them all again.  We could consider only doing this for
+     overlay breakpoints, but GDB regularly removed and inserts all
+     breakpoints anyway, so trying to optimise this seems pointless.  */
   remove_breakpoints ();
   insert_breakpoints ();
 }
@@ -3987,92 +3901,33 @@ detach_breakpoints (ptid_t ptid)
   return val;
 }
 
-#if 0
-/* Remove breakpoint location BL.  */
+/* Remove breakpoint location BL which is a location for an overlay
+   breakpoint.  */
 static int
 remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reason reason)
 {
-  int val;
-
-  /* This breakpoint is in an overlay section.
-     Did we set a breakpoint at the LMA?  */
-  if (!overlay_events_enabled)
-    {
-      /* Yes -- overlay event support is not active, so we
-         should have set a breakpoint at the LMA.  Remove it.  
-      */
-      /* Ignore any failures: if the LMA is in ROM, we will
-         have already warned when we failed to insert it.  */
-      if (bl->loc_type == bp_loc_hardware_breakpoint)
-        target_remove_hw_breakpoint (bl->gdbarch,
-                                     &bl->overlay_target_info);
-      else
-        target_remove_breakpoint (bl->gdbarch,
-                                  &bl->overlay_target_info,
-                                  reason);
-    }
-  /* Did we set a breakpoint at the VMA? 
-     If so, we will have marked the breakpoint 'inserted'.  */
-  if (bl->inserted)
-    {
-      /* Yes -- remove it.  Previously we did not bother to
-         remove the breakpoint if the section had been
-         unmapped, but let's not rely on that being safe.  We
-         don't know what the overlay manager might do.  */
-
-      /* However, we should remove *software* breakpoints only
-         if the section is still mapped, or else we overwrite
-         wrong code with the saved shadow contents.  */
-      if (bl->loc_type == bp_loc_hardware_breakpoint
-          || section_is_mapped (bl->section))
-        val = bl->owner->ops->remove_location (bl, reason);
-      else
-        val = 0;
-    }
-  else
-    {
-      /* No -- not inserted, so no need to remove.  No error.  */
-      val = 0;
-    }
-
-  return val;
-}
-
-#else
-
-/* Remove breakpoint location BL.  */
-static int
-remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reason reason)
-{
-  /* First, figure out if the location of this breakpoint is actually
-     mapped in anywhere.  For now we assume that each breakpoint can only
-     be mapped into a single location, however, this is not true for the
-     everest overlay manager, which can map the same block of code into
-     multiple locations.  */
-
   if (debug_overlay)
-    fprintf_unfiltered (gdb_stdlog, "remove_overlay_breakpoint_location (bp %d) at %s\n",
-                        bl->owner->number,
-                        core_addr_to_string (bl->address));
+    fprintf_unfiltered (gdb_stdlog, "remove_overlay_breakpoint_location "
+                        "(bp %d) at %s\n",
+                        bl->owner->number, core_addr_to_string (bl->address));
 
-  std::vector<CORE_ADDR> mapped_to
-    = overlay_manager_get_mapped_addresses (bl->overlay_target_info.placed_address);
+  CORE_ADDR cache_addr, storage_addr = bl->overlay_target_info.placed_address;
+  if (!overlay_manager_is_storage_address (storage_addr, &cache_addr))
+    error (_("breakpoint %d: storage address %s is not in the storage area"),
+           bl->owner->number, core_addr_to_string (storage_addr));
 
-  if (mapped_to.size () > 1)
-    error (_("address %s is mapped to too many locations"),
-           core_addr_to_string (bl->requested_address));
-
-  /* This location is not mapped in, return 0 to indicate that the
-     breakpoint has been removed.  This is going to be the wrong thing to
-     do if this is a hardware breakpoint.  */
-  if (mapped_to.size () == 0)
+  /* If the call into the overlay manager above sets CACHE_ADDR equal to
+     STORAGE_ADDR then this breakpoint is no longer mapped in.  */
+  if (cache_addr == storage_addr)
     {
       struct bp_location **locp = NULL, **loc2p, *loc;
 
       if (debug_overlay)
-        fprintf_unfiltered (gdb_stdlog,
-                            "breakpoint location is no longer mapped in\n");
+        fprintf_unfiltered (gdb_stdlog, "breakpoint %d inserted at %s is "
+                            "no longer mapped\n", bl->owner->number,
+                            core_addr_to_string (bl->address));
 
+      /* Removing a h/w breakpoint is easy, we just ... remove it.  */
       if (bl->loc_type == bp_loc_hardware_breakpoint)
         target_remove_hw_breakpoint (bl->gdbarch,
                                      &bl->target_info);
@@ -4122,7 +3977,8 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
              RISC-V).  */
           val = target_read_memory (addr, readbuf, sizeof (readbuf));
           if (val != 0)
-            error (_("failed to read target memory during software breakpoint removal at %ss"),
+            error (_("failed to read target memory during software "
+                     "breakpoint removal at %ss"),
                    core_addr_to_string (addr));
 
           /* Remove the s/w breakpoint.  */
@@ -4131,7 +3987,8 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
           /* Now write back the original memory contents.  */
           val = target_write_raw_memory (addr, readbuf, sizeof (readbuf));
           if (val != 0)
-            error (_("failed to write target memory during software breakpoint removal at %ss"),
+            error (_("failed to write target memory during software "
+                     "breakpoint removal at %ss"),
                    core_addr_to_string (addr));
 
           if (debug_overlay)
@@ -4187,19 +4044,26 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
       return 0;
     }
 
-  /* We want to remove this breakpoint, but its mapping has changed, and
-     the code is no longer where we expected it to be.  */
-  if (bl->address != mapped_to[0])
-    {
-      if (debug_overlay)
-        {
-          fprintf_unfiltered (gdb_stdlog, "Breakpoint location was at %s\n",
-                              core_addr_to_string (bl->address));
-          fprintf_unfiltered (gdb_stdlog, "  It is now at %s\n",
-                              core_addr_to_string (mapped_to[0]));
-        }
-      error (_("breakpoint mapping has changed at removal time"));
-    }
+  /* If the storage address for this breakpoint is mapped to a different
+     cache address that is was when the breakpoint was first inserted then
+     something has gone wrong.
+
+     You might think that we'd hit this case all the time, we remove
+     breakpoints after GDB stops at the event breakpoint, by which point
+     the mapping has been updated, right.
+
+     We avoid this problem though because ComRV doesn't move overlays, so
+     an overlay will always be mapped at one location, then unmapped, then
+     mapped to a new location.  It is never the case that ComRV suddenly
+     decides to move an overlay from one location to another without first
+     unmapping it.  If this ever changes then we will have to do something
+     smarter here.  */
+  if (cache_addr != bl->address)
+    error (_("breakpoint %d, storage address %s, was inserted at %s, "
+             "but\n    is now mapped to %s\n"),
+           bl->owner->number, core_addr_to_string (storage_addr),
+           core_addr_to_string (bl->address),
+           core_addr_to_string (cache_addr));
 
   /* The code is still mapped in at the expected location, and we can
      proceed to remove this breakpoint in the normal way.  */
@@ -4215,8 +4079,6 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
     fprintf_unfiltered (gdb_stdlog, "  breakpoint removed\n");
   return 0;
 }
-
-#endif 
 
 /* Remove the breakpoint location BL from the current address space.
    Note that this is used to detach breakpoints from a child fork.
@@ -12342,6 +12204,41 @@ refresh_multi_group_breakpoints ()
   }
 }
 
+/* Check that a list of COUNT breakpoint locations, with the first location
+   at LOCATIONS is sorted by their address field.  If the locations are
+   out of order then throw an error.  */
+
+static void
+check_locations_are_sorted (struct bp_location **locations,
+                            unsigned count,
+                            const char *file, unsigned lineno)
+{
+  struct bp_location **locp, *loc2 = nullptr;
+  bool is_bad = false;
+
+  for (locp = locations; locp < locations + count; locp++)
+    {
+      if (loc2 != nullptr)
+        {
+          if (!bp_location_is_less_than (loc2, *locp))
+            is_bad = true;
+        }
+      loc2 = *locp;
+    }
+
+  if (is_bad)
+    {
+      fprintf_unfiltered (gdb_stderr,
+                          "Locations are out of order (%s:%d):\n",
+                          file, lineno);
+      for (locp = locations; locp < locations + count; locp++)
+        fprintf_unfiltered (gdb_stderr, "  BP %d, at %s\n",
+                            (*locp)->owner->number,
+                            core_addr_to_string ((*locp)->address));
+      error (_("breakpoint locations are out of order"));
+    }
+}
+
 /* Called whether new breakpoints are created, or existing breakpoints
    deleted, to update the global location list and recompute which
    locations are duplicate of which.
@@ -12383,8 +12280,9 @@ update_global_location_list (enum ugll_insert_mode insert_mode)
   if (overlay_manager_has_multi_groups ())
     refresh_multi_group_breakpoints ();
 
-  std::sort (old_locations.get (), old_locations.get () + old_locations_count,
-	     bp_location_is_less_than);
+  /* Sanity check that the old locations are sorted.  */
+  check_locations_are_sorted (old_locations.get (), old_locations_count,
+                              __FILE__, __LINE__);
 
   ALL_BREAKPOINTS (b)
     for (loc = b->loc; loc; loc = loc->next)

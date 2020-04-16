@@ -1501,7 +1501,7 @@ dwarf2_frame_prev_register (struct frame_info *this_frame, void **this_cache,
           cache->prev_t3_valid_p = true;
           cache->prev_t3 = val_t3 + stack_entry.offset;
 
-          if (overlay_manager_is_overlay_cache_address (stack_entry.ra))
+          if (overlay_manager_is_cache_address (stack_entry.ra))
             {
               /* This is an address within the overlay cache region.  We
                  need to look in the previous stack frame in order to find

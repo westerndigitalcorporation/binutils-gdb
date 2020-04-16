@@ -2677,10 +2677,11 @@ insert_overlay_breakpoint_loc (struct bp_location *bl,
                             bl->owner->number);
     }
 
-  fprintf_unfiltered (gdb_stdlog,
-                      "inserted_overlay_breakpoint_location for bp %d at %s\n",
-                      bl->owner->number,
-                      core_addr_to_string (bl->address));
+  if (debug_overlay)
+    fprintf_unfiltered (gdb_stdlog,
+                        "inserted_overlay_breakpoint_location for bp %d at %s\n",
+                        bl->owner->number,
+                        core_addr_to_string (bl->address));
 
   return true;
 }

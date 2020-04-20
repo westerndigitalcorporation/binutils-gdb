@@ -4076,12 +4076,68 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
                                      &bl->target_info);
       else
         {
-          /* We can't do anything about software breakpoints, as the
-             location at which the breakpoint was inserted is no longer
-             mapped.  If we tried to remote it we would end up writing the
-             old instruction back into the new mapping, causing code
-             corruption.  Just treat the breakpoint as removed and hope
-             that the target will not get upset.  */
+          /* Right then....
+
+             ... this is a software breakpoint.  The overlay for which this
+             s/w breakpoint was placed is no longer mapped, which means
+             something else has been mapped over the top, the code has been
+             replaced, and the s/w breakpoint instruction lost.
+
+             However, if we leave the target thinking that this breakpoint
+             is still inserted then we will have problems (maybe).  OpenOCD
+             will throw an error if a duplicate s/w breakpoint is placed.
+             Technically this is an OpenOCD bug, GDB is documented to
+             require a target to allow multiple breakpoints to be placed at
+             the same location.  However, the word used in the GDB manual
+             to describe this is "idempotent", so repeated attempts to
+             place the breakpoint should have no impact on the target after
+             the first placement.  I interpret this to mean that a second
+             breakpoint placement could be ignored.
+
+             So, we absolutely have to convince the target that the s/w
+             breakpoint has been removed, however, just "removing" the s/w
+             breakpoint will corrupt the new contents of the memory.  So,
+             the plan is:
+
+             (a) read the new memory contents.
+             (b) remove the s/w breakpoint, corrupting memory, and
+             (c) write back the original memory contents.  */
+
+          struct bp_target_info *bp_tgt = &bl->target_info;
+          CORE_ADDR addr = bp_tgt->placed_address;
+          gdb_byte readbuf[4];
+          int val;
+
+          if (debug_overlay)
+            fprintf_unfiltered (gdb_stdlog,
+                                "Starting removal of unmapped software "
+                                "breakpoint location (bp %d) at %s\n",
+                                bl->owner->number,
+                                core_addr_to_string (addr));
+
+          /* Save the memory contents, read enough bytes to ensure we cover
+             the longest possible s/w breakpoint on this target (4 for
+             RISC-V).  */
+          val = target_read_memory (addr, readbuf, sizeof (readbuf));
+          if (val != 0)
+            error (_("failed to read target memory during software breakpoint removal at %ss"),
+                   core_addr_to_string (addr));
+
+          /* Remove the s/w breakpoint.  */
+          target_remove_breakpoint (bl->gdbarch, bp_tgt, reason);
+
+          /* Now write back the original memory contents.  */
+          val = target_write_raw_memory (addr, readbuf, sizeof (readbuf));
+          if (val != 0)
+            error (_("failed to write target memory during software breakpoint removal at %ss"),
+                   core_addr_to_string (addr));
+
+          if (debug_overlay)
+            fprintf_unfiltered (gdb_stdlog,
+                                "Completed removal of unmapped software "
+                                "breakpoint location (bp %d) at %s\n",
+                                bl->owner->number,
+                                core_addr_to_string (addr));
         }
 
       /* There can be many breakpoint locations pointing at this address.

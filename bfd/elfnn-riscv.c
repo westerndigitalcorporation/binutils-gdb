@@ -346,7 +346,7 @@ struct ovl_func_hash_entry
   /* TRUE if function belongs to more than one group.  */
   bfd_boolean multigroup;
   bfd_vma multigroup_offset;
-  bfd_boolean multigroup_token;
+  bfd_vma multigroup_token;
   /* PLT offset if this function has a PLT value.  */
   bfd_boolean plt_entry;
   bfd_vma plt_offset;

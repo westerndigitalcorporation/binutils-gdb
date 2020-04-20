@@ -705,7 +705,7 @@ Alignment - The alignment field from the ComRV stack, alignment to size of
             print ("%5s %10s %10s %10s %10s %6s %6s"
                    % ("Frame", "Address", "R/A", "Token", "Alignment", "M/G", "Size"))
         else:
-            print ("%5s %10s %10s %10s %6s"
+            print ("%5s %10s %10s %10s %10s %6s"
                    % ("Frame", "Address", "R/A", "Token", "Alignment", "Size"))
         while (True):
             frame = comrv_stack_frame (t3_addr, is_mg)

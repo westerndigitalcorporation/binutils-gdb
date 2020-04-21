@@ -335,12 +335,11 @@ class overlay_data:
                                                                    mg_tokens))
                         # Now reset ready to read the next multi-group.
                         mg_idx += 1
-                        mg_member_idx = 0
                         mg_tokens = list ()
                 # Otherwise a non-zero token is a member of the multi-group.
                 else:
                     mg_tokens.append (ovly_token)
-                    mg_start += 4		# The size of one overlay token.
+                mg_start += 4		# The size of one overlay token.
             return multi_groups, all_tokens
 
         if (multi_group_offset >= 0):

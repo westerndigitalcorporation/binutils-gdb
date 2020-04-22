@@ -319,7 +319,9 @@ riscv_make_ovlplt_entry (bfd_vma addr, uint32_t *entry)
   return TRUE;
 }
 
-/* Linked list of overlay group ids.  */
+/* Linked list of overlay group ids.
+   NOTE: Offset will not change with relaxation, so this value MUST NOT be
+         relied upon for token generation, use the output_offset instead.  */
 struct ovl_func_group_info
 {
   bfd_vma id;
@@ -2970,7 +2972,7 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
 
 	      free(target_sym_input_sec_name);
 	      free(group_first_input_sec_name);
-	      token = ovltoken(0, 0, func_group_info->offset / 4,
+	      token = ovltoken(0, 0, offset_into_group / 4,
 	                       func_group_info->id);
 
 	      bfd_put_32 (htab->elf.dynobj, token, loc);

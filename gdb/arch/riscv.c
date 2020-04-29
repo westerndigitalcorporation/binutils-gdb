@@ -24,8 +24,6 @@
 #include "../features/riscv/64bit-cpu.c"
 #include "../features/riscv/32bit-fpu.c"
 #include "../features/riscv/64bit-fpu.c"
-#include "../features/riscv/32bit-csr.c"
-#include "../features/riscv/64bit-csr.c"
 
 #ifndef GDBSERVER
 #define STATIC_IN_GDB static
@@ -74,13 +72,6 @@ riscv_create_target_description (const struct riscv_gdbarch_features features)
     regnum = create_feature_riscv_32bit_fpu (tdesc, regnum);
   else if (features.flen == 8)
     regnum = create_feature_riscv_64bit_fpu (tdesc, regnum);
-
-  /* Include all CSRs to allow reading them from a core file,  */
-  //TODO maybe only do this whilst reading a core file
-  if (features.xlen == 4)
-    regnum = create_feature_riscv_32bit_csr (tdesc, regnum);
-  else if (features.xlen == 8)
-    regnum = create_feature_riscv_64bit_csr (tdesc, regnum);
 
   return tdesc;
 }

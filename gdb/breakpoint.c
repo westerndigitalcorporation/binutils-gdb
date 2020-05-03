@@ -119,6 +119,8 @@ static struct breakpoint *set_raw_breakpoint_without_location (struct gdbarch *,
 static struct bp_location *add_location_to_breakpoint (struct breakpoint *,
 						       const struct symtab_and_line *);
 
+static int bp_location_is_less_than (const bp_location *a, const bp_location *b);
+
 /* This function is used in gdbtk sources and thus can not be made
    static.  */
 struct breakpoint *set_raw_breakpoint (struct gdbarch *gdbarch,
@@ -4150,10 +4152,36 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
         {
           loc = (*loc2p);
 
+          if (debug_overlay)
+            fprintf_unfiltered (gdb_stdlog,
+                                "  Reverting location address for bp %d "
+                                "from %s to %s\n",
+                                loc->owner->number,
+                                core_addr_to_string (loc->address),
+                                core_addr_to_string (loc->overlay_target_info.placed_address));
+
           /* Now that the breakpoint is considered no longer inserted, we must
              reset the bl->address field.  */
           loc->address = loc->overlay_target_info.placed_address;
           loc->overlay_target_info.placed_address = 0;
+        }
+
+      /* It is required that the BP_LOCATIONS list be sorted by the address
+         of the location.  After updating the addresses above we should
+         resort the list now.  */
+      std::sort (bp_locations, bp_locations + bp_locations_count,
+                 bp_location_is_less_than);
+
+      if (debug_overlay)
+        {
+          fprintf_unfiltered (gdb_stdlog, "Current location addresses:\n");
+          ALL_BP_LOCATIONS (loc, locp)
+            {
+              fprintf_unfiltered (gdb_stdlog,
+                                  "  Location address for bp %d: %s\n",
+                                  loc->owner->number,
+                                  core_addr_to_string (loc->address));
+            }
         }
 
       return 0;

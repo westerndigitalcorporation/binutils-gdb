@@ -1377,7 +1377,13 @@ get_comrv_ret_from_callee_addr (struct frame_info *this_frame)
 {
   static CORE_ADDR cached_addr = 0;
   if (cached_addr != 0)
-    return cached_addr;
+    {
+      if (dwarf_comrv_debug > 0)
+        fprintf_unfiltered (gdb_stdlog,
+                            "get_comrv_ret_from_callee_addr = %s\t(cached)\n",
+                            core_addr_to_string (cached_addr));
+      return cached_addr;
+    }
 
   struct bound_minimal_symbol msymbol;
   CORE_ADDR maddr;
@@ -1394,6 +1400,11 @@ get_comrv_ret_from_callee_addr (struct frame_info *this_frame)
 					      BMSYMBOL_VALUE_ADDRESS (msymbol),
 					      current_top_target ());
   cached_addr = maddr;
+
+  if (dwarf_comrv_debug > 0)
+    fprintf_unfiltered (gdb_stdlog,
+                        "get_comrv_ret_from_callee_addr = %s\t(computed)\n",
+                        core_addr_to_string (cached_addr));
   return cached_addr;
 }
 
@@ -1411,7 +1422,15 @@ dwarf2_frame_prev_register (struct frame_info *this_frame, void **this_cache,
      no special processing is required.  */
   CORE_ADDR comrv_return_addr = get_comrv_ret_from_callee_addr (this_frame);
   if (comrv_return_addr == 0)
-    return val;
+    {
+      if (dwarf_comrv_debug > 0 && (regnum == RISCV_PC_REGNUM
+                                    || regnum == t3_regnum))
+        fprintf_unfiltered (gdb_stdlog,
+                            "Accessing $pc or $t3 (in frame %d), but not "
+                            "applying ComRV unwinding\n",
+                            frame_relative_level (this_frame));
+      return val;
+    }
 
   if (regnum == RISCV_PC_REGNUM)
     {

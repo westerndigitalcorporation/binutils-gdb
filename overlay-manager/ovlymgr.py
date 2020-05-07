@@ -262,7 +262,7 @@ class overlay_data:
     # overlay cache tables, and return an instance of an object holding all of
     # this data.
     @staticmethod
-    def _load_group_data (table_start, table_size, storage_start,
+    def _load_group_data (table_start, table_size, storage_desc,
                           multi_group_offset):
 
         def _load_overlay_groups (table_start, table_end, storage_start):
@@ -342,6 +342,7 @@ class overlay_data:
                 mg_start += 4		# The size of one overlay token.
             return multi_groups, all_tokens
 
+        storage_start = storage_desc.start_address ()
         if (multi_group_offset >= 0):
             table_end = table_start + multi_group_offset
         else:
@@ -364,16 +365,24 @@ class overlay_data:
                 _overlay_group_data (groups, multi_groups, all_tokens))
 
     # Read the address of symbol NAME from the inferior, return the
-    # address as an integer.
+    # address as an integer.  If an error is thrown (missing symbol?)
+    # then None is returned.
     @staticmethod
     def _read_symbol_address_as_integer (name):
-        return int (gdb.parse_and_eval ("&%s" % (name)))
+        try:
+            return int (gdb.parse_and_eval ("&%s" % (name)))
+        except:
+            return None
 
     # Read the value of symbol NAME from the inferior, return the
-    # value as an integer.
+    # value as an integer.  If the symbol can't be read (missing
+    # symbol?) then return None.
     @staticmethod
     def _read_symbol_value_as_integer (name):
-        return int (gdb.parse_and_eval ("%s" % (name)))
+        try:
+            return int (gdb.parse_and_eval ("%s" % (name)))
+        except:
+            return None
 
     # Load from target memory information about the overlay cache and the
     # overlay groups.
@@ -390,7 +399,10 @@ class overlay_data:
         cache_end = overlay_data.\
                     _read_symbol_address_as_integer \
 				(OVERLAY_CACHE_END_SYMBOL)
-        cache_desc = overlay_data._cache_descriptor (cache_start, cache_end)
+        if (cache_start and cache_end):
+            cache_desc = overlay_data._cache_descriptor (cache_start, cache_end)
+        else:
+            cache_desc = None
 
         # Similarly, the storage area, where overlays are loaded from, is
         # defined by a start and end symbol.
@@ -400,8 +412,11 @@ class overlay_data:
         storage_end = overlay_data.\
                         _read_symbol_address_as_integer \
 				(OVERLAY_STORAGE_END_SYMBOL)
-        storage_desc \
-            = overlay_data._storage_descriptor (storage_start, storage_end)
+        if (storage_start and storage_end):
+            storage_desc \
+                = overlay_data._storage_descriptor (storage_start, storage_end)
+        else:
+            storage_desc = None
 
         # This is the offset to the start of the multi-group table
         # from the start of the overlay tables.  We set this to -1
@@ -425,7 +440,7 @@ class overlay_data:
             groups_data = overlay_data.\
                           _load_group_data (cache_desc.tables_base_address (),
                                             cache_desc.tables_size_in_bytes (),
-                                            storage_start, multi_group_offset)
+                                            storage_desc, multi_group_offset)
         else:
             groups_data = None
 
@@ -775,7 +790,7 @@ class MyOverlayManager (gdb.OverlayManager):
         return "_ovly_debug_event"
 
     def get_multi_group_count (self):
-        debug ("In Pythong get_multi_group_count method")
+        debug ("In Python get_multi_group_count method")
         ovly_data = overlay_data.fetch ()
         if (not ovly_data.comrv_initialised ()):
             # If ComRV is not yet initialised then return -1 to

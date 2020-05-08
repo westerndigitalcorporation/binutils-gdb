@@ -181,30 +181,6 @@ overlay_manager_get_cache_address_if_mapped (CORE_ADDR addr)
 
 /* See overlay.h.  */
 
-ULONGEST
-overlay_manager_get_group_size (int group_id)
-{
-  if (registered_overlay_manager == nullptr)
-    /* TODO: Should we throw an error here?  */
-    return 0;
-
-  return registered_overlay_manager->get_group_size (group_id);
-}
-
-/* See overlay.h.  */
-
-CORE_ADDR
-overlay_manager_get_group_unmapped_base_address (int group_id)
-{
-  if (registered_overlay_manager == nullptr)
-    /* TODO: Should we throw an error here?  */
-    return 0;
-
-  return registered_overlay_manager->get_group_unmapped_base_address (group_id);
-}
-
-/* See overlay.h.  */
-
 bool
 overlay_manager_has_multi_groups ()
 {
@@ -223,27 +199,6 @@ overlay_manager_find_multi_group (CORE_ADDR addr, CORE_ADDR *offset)
     return {};
 
   return registered_overlay_manager->find_multi_group (addr, offset);
-}
-
-bool
-overlay_manager_is_multi_group_enabled ()
-{
-  if (registered_overlay_manager == nullptr)
-    return false;
-
-  return registered_overlay_manager->is_multi_group_enabled ();
-}
-
-/* See overlay.h.  */
-
-CORE_ADDR
-overlay_manager_get_multi_group_table_at_index (int index)
-{
-  if (registered_overlay_manager == nullptr)
-    /* TODO: Should this throw an error?  */
-    return 0;
-
-  return registered_overlay_manager->get_multi_group_table_by_index (index);
 }
 
 /* See overlay.h.  */
@@ -330,6 +285,32 @@ bool overlay_manager_is_cache_address (CORE_ADDR address,
     }
 
   return false;
+}
+
+/* See overlay.h.  */
+
+void
+overlay_manager_unwind_comrv_stack_frame (CORE_ADDR comrv_sp,
+                                          CORE_ADDR *old_comrv_sp,
+                                          CORE_ADDR *ra)
+{
+  if (registered_overlay_manager == nullptr)
+    error (_("no overlay manager registered"));
+
+  registered_overlay_manager->unwind_comrv_stack_frame (comrv_sp,
+                                                        old_comrv_sp, ra);
+}
+
+/* See overlay.h.  */
+
+CORE_ADDR
+overlay_manager_get_comrv_return_label (void)
+{
+  CORE_ADDR address = 0;
+
+  if (registered_overlay_manager != nullptr)
+    address = registered_overlay_manager->get_comrv_return_label ();
+  return address;
 }
 
 void _initialize_overlay (void);

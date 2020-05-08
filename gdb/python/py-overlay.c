@@ -27,8 +27,6 @@
 #define EVENT_SYMBOL_NAME_METHOD "event_symbol_name"
 #define READ_MAPPINGS_METHOD "read_mappings"
 #define ADD_MAPPING_METHOD "add_mapping"
-#define GET_GROUP_SIZE_METHOD "get_group_size"
-#define GET_GROUP_BASE_ADDR_METHOD "get_group_unmapped_base_address"
 #define GET_MULTI_GROUP_COUNT_METHOD "get_multi_group_count"
 
 #define SET_STORAGE_REGION_METHOD "set_storage_region"
@@ -118,106 +116,58 @@ public:
     return std::move (m_mappings);
   }
 
-  ULONGEST get_group_size (int group_id) override
+  /* See overlay.h.  */
+  void unwind_comrv_stack_frame (CORE_ADDR sp, CORE_ADDR *prev_sp,
+                                 CORE_ADDR *ra) override
   {
     gdb_assert (gdb_python_initialized);
     gdbpy_enter enter_py (get_current_arch (), current_language);
 
     PyObject *obj = (PyObject *) m_obj;
 
-    /* The base class gdb.OverlayManager provides a default implementation
-       so this method should always be found.  */
-    static const char *method_name = GET_GROUP_SIZE_METHOD;
+    /* Check the Python code implements the required method.  */
+    static const char *method_name = "unwind_comrv_stack_frame";
     if (!PyObject_HasAttrString (obj, method_name))
-      /* TODO: Should we throw an error here?  */
-      return 0;
+      error (_("missing unwind_comrv_stack method in Python OverlayManager"));
 
-    gdbpy_ref<> id_obj (PyLong_FromLongLong ((long long) group_id));
-    if (id_obj == NULL)
-      /* TODO: Should we throw an error here?  */
-      return 0;
+    /* Prepare the address to pass to the Python code.  */
+    gdbpy_ref<> addr_obj (PyLong_FromLongLong (sp));
+    if (addr_obj == NULL)
+      error (_("failed to create python object for stack address"));
 
+    /* Call the Python method and capture the return value.  */
     gdbpy_ref<> method_obj (PyString_FromString (method_name));
     gdb_assert (method_name != NULL);
     gdbpy_ref<> result (PyObject_CallMethodObjArgs (obj, method_obj.get (),
-                                                    id_obj.get (), NULL));
+                                                    addr_obj.get (), NULL));
     if (result == NULL)
-      error (_("missing result object"));
+      error (_("missing result object from %s"), method_name);
 
-    if (PyLong_Check (result.get ()))
-      return PyLong_AsUnsignedLongLong (result.get ());
-    else if (PyInt_Check (result.get ()))
-      return (ULONGEST) PyInt_AsLong (result.get ());
+    if (!PySequence_Check (result.get ()))
+      error (_("result from %s is not a sequence"), method_name);
+
+    if (PySequence_Size (result.get ()) != 2)
+      error (_("incorrect result length from %s"), method_name);
+
+    gdbpy_ref<> list_iter (PyObject_GetIter (result.get ()));
+    gdbpy_ref<> itm0 (PyIter_Next (list_iter.get ()));
+    gdbpy_ref<> itm1 (PyIter_Next (list_iter.get ()));
+
+    if (PyLong_Check (itm0.get ()))
+      *ra = (CORE_ADDR) PyLong_AsUnsignedLongLong (itm0.get ());
+    else if (PyInt_Check (itm0.get ()))
+      *ra = (CORE_ADDR) PyInt_AsLong (itm0.get ());
     else
-      error ("result is not numeric");
-  }
+      error (_("first return value from %s can't be converted "
+               "to an address"), method_name);
 
-  CORE_ADDR get_group_unmapped_base_address (int group_id) override
-  {
-    gdb_assert (gdb_python_initialized);
-    gdbpy_enter enter_py (get_current_arch (), current_language);
-
-    PyObject *obj = (PyObject *) m_obj;
-
-    /* The base class gdb.OverlayManager provides a default implementation
-       so this method should always be found.  */
-    static const char *method_name = GET_GROUP_BASE_ADDR_METHOD;
-    if (!PyObject_HasAttrString (obj, method_name))
-      /* TODO: Should we throw an error here?  */
-      return 0;
-
-    gdbpy_ref<> id_obj (PyLong_FromLongLong ((long long) group_id));
-    if (id_obj == NULL)
-      /* TODO: Should we throw an error here?  */
-      return 0;
-
-    gdbpy_ref<> method_obj (PyString_FromString (method_name));
-    gdb_assert (method_name != NULL);
-    gdbpy_ref<> result (PyObject_CallMethodObjArgs (obj, method_obj.get (),
-                                                    id_obj.get (), NULL));
-    if (result == NULL)
-      error (_("missing result object"));
-
-    if (PyLong_Check (result.get ()))
-      return (CORE_ADDR) PyLong_AsUnsignedLongLong (result.get ());
-    else if (PyInt_Check (result.get ()))
-      return (CORE_ADDR) PyInt_AsLong (result.get ());
+    if (PyLong_Check (itm1.get ()))
+      *prev_sp = (CORE_ADDR) PyLong_AsUnsignedLongLong (itm1.get ());
+    else if (PyInt_Check (itm1.get ()))
+      *prev_sp = (CORE_ADDR) PyInt_AsLong (itm1.get ());
     else
-      error ("result is not an address (or numeric)");
-  }
-
-  CORE_ADDR get_multi_group_table_by_index (int index) override
-  {
-    gdb_assert (gdb_python_initialized);
-    gdbpy_enter enter_py (get_current_arch (), current_language);
-
-    PyObject *obj = (PyObject *) m_obj;
-
-    /* The base class gdb.OverlayManager provides a default implementation
-       so this method should always be found.  */
-    static const char *method_name = "get_multi_group_table_by_index";
-    if (!PyObject_HasAttrString (obj, method_name))
-      /* TODO: Should we throw an error here?  */
-      return 0;
-
-    gdbpy_ref<> idx_obj (PyLong_FromLongLong ((long long) index));
-    if (idx_obj == NULL)
-      /* TODO: Should we throw an error here?  */
-      return 0;
-
-    gdbpy_ref<> method_obj (PyString_FromString (method_name));
-    gdb_assert (method_name != NULL);
-    gdbpy_ref<> result (PyObject_CallMethodObjArgs (obj, method_obj.get (),
-                                                    idx_obj.get (), NULL));
-    if (result == NULL)
-      error (_("missing result object"));
-
-    if (PyLong_Check (result.get ()))
-      return (CORE_ADDR) PyLong_AsUnsignedLongLong (result.get ());
-    else if (PyInt_Check (result.get ()))
-      return (CORE_ADDR) PyInt_AsLong (result.get ());
-    else
-      error ("result is not an address (or numeric)");
+      error (_("second return value from %s can't be converted "
+               "to an address"), method_name);
   }
 
   /* Check to see if the Python overlay manager has any multi group
@@ -375,48 +325,31 @@ public:
     return addr;
   }
 
-  /* See overlay.h.  */
-
-  bool is_multi_group_enabled () override
+  CORE_ADDR get_comrv_return_label (void) override
   {
-    if (m_is_multi_group_enabled)
-      return *m_is_multi_group_enabled;
-
     gdb_assert (gdb_python_initialized);
     gdbpy_enter enter_py (get_current_arch (), current_language);
 
     PyObject *obj = (PyObject *) m_obj;
 
-    /* The base class gdb.OverlayManager provides a default implementation
-       so this method should always be found.  */
-    static const char *method_name = "is_multi_group_enabled";
+    /* Check the Python code implements the required method.  */
+    static const char *method_name = "get_comrv_return_from_callee_label";
     if (!PyObject_HasAttrString (obj, method_name))
-      /* TODO: Should we throw an error here?  */
-      return false;
+      error (_("missing %s method in Python OverlayManager"), method_name);
 
-    gdbpy_ref<> result (PyObject_CallMethod (obj, method_name, NULL));
+    /* Call the Python method and capture the return value.  */
+    gdbpy_ref<> method_obj (PyString_FromString (method_name));
+    gdb_assert (method_name != NULL);
+    gdbpy_ref<> result (PyObject_CallMethodObjArgs (obj, method_obj.get (),
+                                                    NULL));
     if (result == NULL)
-      error (_("missing result object"));
+      error (_("missing result object from %s"), method_name);
 
-    /* Answer can be any integer.  A value less than 0 indicates that
-       Python doesn't know (yet) so we reply with false, but don't cache
-       the answer.  An reply greater than 0 indicates we know overlay
-       support is compiled in, and we can cache the answer, while an
-       response of 0 indicates that we know overlay support is not compiled
-       in, and we can cache the answer.  */
-    int answer;
-    if (PyLong_Check (result.get ()))
-      answer = (int) PyLong_AsLongLong (result.get ());
-    else if (PyInt_Check (result.get ()))
-      answer = (int) PyInt_AsLong (result.get ());
-    else
-      error ("result is not numeric");
+    CORE_ADDR address;
+    if (get_addr_from_python (result.get (), &address) < 0)
+      error (_("failed to extract address from %s result value"), method_name);
 
-    if (answer < 0)
-      return false;
-
-    m_is_multi_group_enabled.emplace (answer > 0);
-    return *m_is_multi_group_enabled;
+    return address;
   }
 
 private:
@@ -488,9 +421,6 @@ private:
 
   /* One descriptor for each multi-group.  */
   std::vector<multi_group_desc> m_multi_groups;
-
-  /* Set when we know if multi-group is compiled into ComRV.  */
-  gdb::optional<bool> m_is_multi_group_enabled;
 };
 
 /* Wrapper around a Python object, provides a mechanism to find the overlay

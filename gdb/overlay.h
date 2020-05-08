@@ -126,22 +126,6 @@ public:
     return false;
   }
 
-  /* HACK: This is only needed until we can move the stack unwinding into
-     the Python overlay manager.  Return the size of group GROUP_ID in
-     bytes.  */
-  virtual ULONGEST get_group_size (int group_id)
-  {
-    /* TODO: Should this be an error?  */
-    return 0;
-  }
-
-  /* HACK: Return the unmapped base address for group GROUP_ID.  */
-  virtual CORE_ADDR get_group_unmapped_base_address (int group_id)
-  {
-    /* TODO: Should this be an error?  */
-    return 0;
-  }
-
   /* HACK: Ideally this would not be needed in a final version of the
      overlay system, but right now I'm not sure how to fully move this code
      into Python.  Maybe it will become clear once everything is working.  */
@@ -179,16 +163,19 @@ public:
     return addr;
   }
 
-  /* Return true if ComRV is compiled with multi-group extensions,
-     otherwise, return false.  */
-  virtual bool is_multi_group_enabled ()
-  {
-    return false;
-  }
+  /* Unwind ComRV stack frame at SP, return previous stack pointer in
+     PREV_SP, and the return address in RA.  If anything prevents unwinding
+     then an error is thrown.  */
+  virtual void unwind_comrv_stack_frame (CORE_ADDR sp, CORE_ADDR *prev_sp,
+                                         CORE_ADDR *ra) = 0;
 
-  /* Return an overlay group token from the multi-group table, indexing
-     into the table at INDEX.  */
-  virtual CORE_ADDR get_multi_group_table_by_index (int index) = 0;
+  /* Return the label within ComRV that indicates a function is returning
+     through ComRV.  This will only be called once, the return value is
+     cache within GDB.
+
+     If ComRV is not active, then return 0 and GDB will not apply any
+     special unwind filtering rules.  */
+  virtual CORE_ADDR get_comrv_return_label (void) = 0;
 
 protected:
 
@@ -269,31 +256,18 @@ extern CORE_ADDR overlay_manager_cache_to_storage_address (CORE_ADDR addr,
 
 extern CORE_ADDR overlay_manager_get_cache_address_if_mapped (CORE_ADDR addr);
 
-/* Return the size (in bytes) of overlay group GROUP_ID.  */
-
-extern ULONGEST overlay_manager_get_group_size (int group_id);
-
-/* Return the unmapped base address of overlay group GROUP_ID.  */
-
-extern CORE_ADDR overlay_manager_get_group_unmapped_base_address (int group_id);
-
 /* Return TRUE if there is any multi-groups in use.  */
 
 extern bool overlay_manager_has_multi_groups ();
 
-/* If ADDR is within the primary function region of a multi-group then
-   return the multi-group number (0 or more), otherwise return -1.  */
+/* If ADDR is within the storage region address range of the primary
+   function of a multi-group then return a list of all the alternative base
+   addresses for that multi-group, and update OFFSET to indicate the
+   offset of ADDR from the primary base address.
+
+   Otherwise, return an empty list, and leave OFFSET unchanged.  */
 
 extern std::vector<CORE_ADDR> overlay_manager_find_multi_group (CORE_ADDR addr, CORE_ADDR *offset);
-
-/* Return true if ComRV is compiled with multi-group extensions, otherwise,
-   return false.  */
-
-extern bool overlay_manager_is_multi_group_enabled ();
-
-/* Get overlay token from multi-group table at INDEX.  */
-
-extern CORE_ADDR overlay_manager_get_multi_group_table_at_index (int index);
 
 /* Return true if ADDRESS is an address within the overlay storage region,
    otherwise, return false.
@@ -316,5 +290,26 @@ extern bool overlay_manager_is_storage_address (CORE_ADDR address,
 extern bool overlay_manager_is_cache_address (CORE_ADDR address,
                                               CORE_ADDR *storage_address = nullptr,
                                               bool resolve_multi_group_p = false);
+
+/* Called during stack unwinding to unwind an entry from the ComRV stack at
+   COMRV_SP.  A return address within the overlay storage area is
+   returned in RA, and the previous value of the ComRV stack pointer is
+   returned in OLD_COMRV_SP.
+
+   If anything goes wrong, or the stack can't be unwound then an error is
+   thrown.  */
+
+extern void overlay_manager_unwind_comrv_stack_frame (CORE_ADDR comrv_sp,
+                                                      CORE_ADDR *old_comrv_sp,
+                                                      CORE_ADDR *ra);
+
+/* Return the magic address which indicates that a function return is going
+   back through ComRV.  This will only be called once, and the return value
+   will be cached.
+
+   If the label is unknown, or ComRV is not in use, return 0, in which
+   case the unwind code will not apply any special ComRV rules.  */
+
+extern CORE_ADDR overlay_manager_get_comrv_return_label (void);
 
 #endif /* !defined OVERLAY_H */

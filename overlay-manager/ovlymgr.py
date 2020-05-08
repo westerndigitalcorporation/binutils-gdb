@@ -885,6 +885,87 @@ class MyOverlayManager (gdb.OverlayManager):
         debug ("All mappings added")
         return True
 
+    # Return the address of the label that a function will return too
+    # if it is returning through the ComRV enginee.  If the label
+    # can't be found (maybe ComRV is not in use) then return 0.
+    def get_comrv_return_from_callee_label (self):
+        try:
+            return int (gdb.parse_and_eval ("&comrv_ret_from_callee"))
+        except:
+            return 0
+
+    # Unwind the ComRV stack frame at ADDR.  Return a list of two
+    # elements.  The first element is the return address extracted
+    # from the ComRV stack frame, and the second element is the
+    # address of the previous ComRV stack frame.
+    def unwind_comrv_stack_frame (self, addr):
+        ovly_data = overlay_data.fetch ()
+        if (not ovly_data.comrv_initialised ()):
+            raise RuntimeError ("ComRV is not initialised")
+        is_mg = ovly_data.is_multi_group_enabled ()
+
+        # Create a stack frame object at ADDR to represent the stack
+        # frame we are unwinding.
+        frame = comrv_stack_frame (addr, is_mg)
+
+        comrv_return_addr = self.get_comrv_return_from_callee_label ()
+        if (comrv_return_addr == 0):
+            raise RuntimeError ("ComRV unwinding is disabled")
+        while (frame.return_address () == comrv_return_addr):
+            if (frame.offset () == 0xdead):
+                raise RuntimeError ("hit top of ComRV stack (1)")
+
+            addr += frame.offset ()
+            frame = comrv_stack_frame (addr, is_mg)
+
+        if (frame.return_address () == 0
+            and frame.token () == 0):
+            raise RuntimeError ("hit top of ComRV stack (2)")
+
+        addr += frame.offset ()
+
+        ra = frame.return_address ()
+        cache_start = ovly_data.cache ().start_address ()
+        cache_end = ovly_data.cache ().end_address ()
+        if (ra >= cache_start and ra < cache_end):
+            prev_frame = comrv_stack_frame (addr, is_mg)
+
+            if ((prev_frame.token () & 0x1) != 0x1):
+                raise RuntimeError ("returning to overlay function, "
+                                    + "second stack frame token is "
+                                    + str (prev_frame.token ()))
+
+            token = prev_frame.token ()
+            if (((token >> 31) & 0x1) == 0x1):
+                if (prev_frame.multi_group_index () == -1):
+                    raise RuntimeError ("mutli-group stack token with no valid token index")
+                idx = prev_frame.multi_group_index ()
+                token = self.get_multi_group_table_by_index (idx)
+
+            group_id = (token >> 1) & 0xffff
+            func_offset = (token >> 17) & 0x3ff
+            alignment = prev_frame.align ()
+            group_size = ovly_data.group (group_id).size_in_bytes ()
+            max_group_size = 4096
+            group_offset = (func_offset
+                            + ((frame.return_address () - func_offset
+                                - alignment) & (max_group_size - 1)))
+            base_addr = ovly_data.group (group_id).base_address ()
+            ra = base_addr + group_offset
+
+            #print ("Unwinder:")
+            #print ("  frame.return_addr: " + hex (frame.return_address ()))
+            #print ("  group_id: " + str (group_id))
+            #print ("  func_offset: " + hex (func_offset))
+            #print ("  alignment: " + hex (alignment))
+            #print ("  group_size: " + hex (group_size))
+            #print ("  max_group_size: " + hex (max_group_size))
+            #print ("  group_offset: " + hex (group_offset))
+            #print ("  base_addr: " + hex (base_addr))
+            #print ("  ra: " + str (ra))
+
+        return ra, addr
+
     # This is a temporary hack needed to support backtracing.
     # Ideally, the whole backtracing stack unwind would move into
     # python, and then this function would not be needed, however, to

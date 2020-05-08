@@ -1390,8 +1390,7 @@ get_comrv_ret_from_callee_addr (struct frame_info *this_frame)
 
   if (symfile_objfile == 0)
     return 0;
-  msymbol = lookup_minimal_symbol ("comrv_ret_from_callee", NULL,
-                                   symfile_objfile);
+  msymbol = lookup_bound_minimal_symbol ("comrv_ret_from_callee");
   if (msymbol.minsym == NULL)
     return 0;
   /* Make certain that the code, and not descriptor, address is

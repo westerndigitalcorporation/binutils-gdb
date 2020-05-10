@@ -641,7 +641,7 @@ class comrv_stack_frame:
         return (self._token & 0xffffffff)
 
     def align (self):
-        return ((self._token & 0xffff) * OVERLAY_MIN_CACHE_ENTRY_SIZE_IN_BYTES)
+        return ((self._align & 0xffff) * OVERLAY_MIN_CACHE_ENTRY_SIZE_IN_BYTES)
 
     def multi_group_index (self):
         return (self._mg_index & 0xffff)

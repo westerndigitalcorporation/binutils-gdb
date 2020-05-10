@@ -1,9 +1,136 @@
 import gdb
 import re
 
-# Set this to True from within GDB to activate debug output from
-# within this file.
-overlay_debug = False
+# Required to make calls to super () work in python2.
+__metaclass__ = type
+
+#=====================================================================#
+
+# Should debug messages be printed?
+DEFAULT_DEBUG = False
+
+# The default maximum group size.
+DEFAULT_MAX_GROUP_SIZE = 4096
+
+# The default size for the "pages" in the ComRV cache and storage area.
+DEFAULT_MIN_COMRV_CACHE_ENTRY_SIZE_IN_BYTES = 512
+OVERLAY_MIN_CACHE_ENTRY_SIZE_IN_BYTES = 512
+
+# Various symbols that are read in order to parse ComRV.
+INIT_SYMBOL = "g_stComrvCB.ucTablesLoaded"
+MULTI_GROUP_OFFSET_SYMBOL = "g_stComrvCB.ucMultiGroupOffset"
+OVERLAY_STORAGE_START_SYMBOL = "OVERLAY_START_OF_OVERLAYS"
+OVERLAY_STORAGE_END_SYMBOL = "OVERLAY_END_OF_OVERLAYS"
+OVERLAY_CACHE_START_SYMBOL = "__OVERLAY_CACHE_START__"
+OVERLAY_CACHE_END_SYMBOL = "__OVERLAY_CACHE_END__"
+COMRV_RETURN_FROM_CALLEE_LABEL = "comrv_ret_from_callee"
+
+# The following symbols are actually used as format strings.  They must
+# include a single '%d' format specified which is replaced with the ComRV
+# cache index.
+OVERLAY_CACHE_AT_INDEX_TO_GROUP_ID \
+    = "g_stComrvCB.stOverlayCache[%d].unToken.stFields.uiOverlayGroupID"
+OVERLAY_CACHE_AT_INDEX_TO_SIZE_IN_MIN_UNITS \
+    = "g_stComrvCB.stOverlayCache[%d].unProperties.stFields.ucSizeInMinGroupSizeUnits"
+
+#=====================================================================#
+
+# A class for the control variable 'set/show debug comrv on|off'.
+class debug_parameter (gdb.Parameter):
+    '''Controls debugging messages from the Python Overlay Manager.  This
+should only be needed to help track down bugs in the Python code.'''
+    set_doc = "Set whether debugging from the Python Overlay Manager is on."
+    show_doc = "Show whether debugging from the Python Overlay Manager is on."
+    def __init__ (self):
+        gdb.Parameter.__init__ (self, "debug comrv",
+                                gdb.COMMAND_MAINTENANCE,
+                                gdb.PARAM_BOOLEAN)
+        self.value = DEFAULT_DEBUG
+
+    def get_show_string (self, value):
+        return ("Debugging of ComRV Python overlay manager is %s."
+                % (value))
+
+    def __nonzero__ (self):
+        if (self.value):
+            return 1
+        else:
+            return 0
+
+    def __bool__ (self):
+        return self.value
+
+# An instance of the debug parameter.  Due to operator overloading
+# this can be treated as a boolean like:
+#   if (overlay_debug):
+#     ...
+overlay_debug = debug_parameter ()
+
+# Class to create the 'set comrv' prefix command.
+class set_comrv_prefix_command (gdb.Command):
+    def __init__ (self):
+        gdb.Command.__init__ (self, "set comrv", gdb.COMMAND_NONE, gdb.COMPLETE_NONE, True)
+
+# Class to create the 'show comrv' prefix command.
+class show_comrv_prefix_command (gdb.Command):
+    def __init__ (self):
+        gdb.Command.__init__ (self, "show comrv", gdb.COMMAND_NONE, gdb.COMPLETE_NONE, True)
+
+# Now instantiate the above classes, actually creating the 'set comrv' and
+# 'show comrv' prefix commands.
+set_comrv_prefix_command ()
+show_comrv_prefix_command ()
+
+# Class that represents the maximum overlay group size.  This is used when
+# unwinding the ComRV stack.
+class max_group_size_parameter (gdb.Parameter):
+    '''The maximum group size.  This is a hard coded constant within the
+toolchain and ComRV.  The value here must be adjusted to match.  This value
+is required in order to correctly unwind the ComRV stack.
+
+Changing this once GDB has already parsed the ComRV data structures will
+cause undefined behaviour.  This should only be modified once, immediately
+after initially loading the ComRV support Pythong script.'''
+    set_doc = "Set the maximum overlay group size."
+    show_doc = "Show the maximum overlay group size."
+    def __init__ (self):
+        gdb.Parameter.__init__ (self, "comrv max-group-size",
+                                gdb.COMMAND_STACK,
+                                gdb.PARAM_ZUINTEGER)
+        self.value = DEFAULT_MAX_GROUP_SIZE
+
+    def get_show_string (self, value):
+        return ("Maximum ComRV overlay group size is %s." % (value))
+
+# Instance of parameter object.  Use the value field of this object.
+max_group_size = max_group_size_parameter ()
+
+# Class that represents the size of the "pages" in the ComRV cache and
+# storage area.  This is the minimum unit size in which overlays are
+# measured.
+class min_overlay_entry_size_parameter (gdb.Parameter):
+    '''The minimum size for a ComRV overlay.  Many aspects of Comrv are
+measured in multiples of this minimum size.  This value must match the
+value used by the compiler, linker, and ComRV enginee.
+
+Changing this once GDB has already parsed the ComRV data structures will
+cause undefined behaviour.  This should only be modified once, immediately
+after initially loading the ComRV support Pythong script.'''
+    set_doc = "Set the minimum ComRV entry size."
+    show_doc = "Show the minimum ComRV entry size."
+    def __init__ (self):
+        gdb.Parameter.__init__ (self, "comrv min-entry-size",
+                                gdb.COMMAND_STACK,
+                                gdb.PARAM_ZUINTEGER)
+        self.value = DEFAULT_MIN_COMRV_CACHE_ENTRY_SIZE_IN_BYTES
+
+    def get_show_string (self, value):
+        return ("Minimum ComRV entry size, in bytes, is %s." % (value))
+
+# Instance of parameter object.  Use the value field of this object.
+min_entry_size = min_overlay_entry_size_parameter ()
+
+#=====================================================================#
 
 # Print STRING as a debug message if OVERLAY_DEBUG is True.
 def debug (string):
@@ -27,21 +154,17 @@ class temp_debug_on:
         global overlay_debug
         overlay_debug = self._old_overlay_debug
 
-# Required to make calls to super () work in python2.
-__metaclass__ = type
-
-INIT_SYMBOL = "g_stComrvCB.ucTablesLoaded"
-MULTI_GROUP_OFFSET_SYMBOL = "g_stComrvCB.ucMultiGroupOffset"
-OVERLAY_STORAGE_START_SYMBOL = "OVERLAY_START_OF_OVERLAYS"
-OVERLAY_STORAGE_END_SYMBOL = "OVERLAY_END_OF_OVERLAYS"
-OVERLAY_CACHE_START_SYMBOL = "__OVERLAY_CACHE_START__"
-OVERLAY_CACHE_END_SYMBOL = "__OVERLAY_CACHE_END__"
-OVERLAY_MIN_CACHE_ENTRY_SIZE_IN_BYTES = 512
+#=====================================================================#
 
 # Thanks to: https://stackoverflow.com/a/32031543/3228495
 def sign_extend (value, bits):
     sign_bit = 1 << (bits - 1)
     return (value & (sign_bit - 1)) - (value & sign_bit)
+
+# Wrapper around access to the global configuration parameter.
+def get_comrv_min_entry_size ():
+    global min_entry_size
+    return min_entry_size.value
 
 # Class to wrap reading memory.  Provides an API for reading unsigned
 # values of various sizes from memory.
@@ -77,8 +200,7 @@ class mem_reader:
 # The Overlay Cache Area is defined by a start and end label, this is
 # the area into which code (and data?) is loaded in order to use it.
 # This area is divided into "pages", each page is (currently) 512
-# bytes (0x200) is size (see OVERLAY_MIN_CACHE_ENTRY_SIZE_IN_BYTES)
-# for this constant.
+# bytes (0x200) in size, but this can be modified by the user.
 # The overlay tables are loaded into the last page of this cache
 # area.
 class overlay_data:
@@ -197,7 +319,7 @@ class overlay_data:
         # Return the size in bytes of a single entry (or page) within the
         # cache.
         def entry_size_in_bytes (self):
-            return OVERLAY_MIN_CACHE_ENTRY_SIZE_IN_BYTES
+            return get_comrv_min_entry_size ()
 
     # A class that describes the overlay systems storage area.  This
     # is the area of memory from which the overlays are loaded.  The
@@ -255,7 +377,7 @@ class overlay_data:
             raise RuntimeError ("out of bounds access while reading offset "
                                 + "table for group %d" % (group_number))
         scaled_offset = mem_reader.read_16_bit (base_address)
-        offset = OVERLAY_MIN_CACHE_ENTRY_SIZE_IN_BYTES * scaled_offset
+        offset = get_comrv_min_entry_size () * scaled_offset
         return offset
 
     # Read a 32-bit overlay token from the multi-group table.  ADDRESS
@@ -499,7 +621,7 @@ class mapped_overlay_group_walker:
         # Now walk the overlay cache and see which entries are mapped in.
         index = 0
         while (index < ovly_data.cache ().number_of_working_entries ()):
-            group = gdb.parse_and_eval ("g_stComrvCB.stOverlayCache[%d].unToken.stFields.uiOverlayGroupID" % (index))
+            group = gdb.parse_and_eval (OVERLAY_CACHE_AT_INDEX_TO_GROUP_ID % (index))
             group = int (group)
             offset = None
 
@@ -516,7 +638,7 @@ class mapped_overlay_group_walker:
                                                 index, group)):
                     break
 
-                offset = gdb.parse_and_eval ("g_stComrvCB.stOverlayCache[%d].unProperties.stFields.ucSizeInMinGroupSizeUnits" % (index))
+                offset = gdb.parse_and_eval (OVERLAY_CACHE_AT_INDEX_TO_SIZE_IN_MIN_UNITS % (index))
                 offset = int (offset)
                 if (offset == 0):
                     # Something has gone wrong here.  An overlay
@@ -663,7 +785,7 @@ class comrv_stack_frame:
         return (self._token & 0xffffffff)
 
     def align (self):
-        return ((self._align & 0xffff) * OVERLAY_MIN_CACHE_ENTRY_SIZE_IN_BYTES)
+        return ((self._align & 0xffff) * get_comrv_min_entry_size ())
 
     def multi_group_index (self):
         return (self._mg_index & 0xffff)
@@ -890,7 +1012,8 @@ class MyOverlayManager (gdb.OverlayManager):
     # can't be found (maybe ComRV is not in use) then return 0.
     def get_comrv_return_from_callee_label (self):
         try:
-            return int (gdb.parse_and_eval ("&comrv_ret_from_callee"))
+            name = COMRV_RETURN_FROM_CALLEE_LABEL
+            return int (gdb.parse_and_eval ("&%s" % (name)))
         except:
             return 0
 
@@ -899,6 +1022,8 @@ class MyOverlayManager (gdb.OverlayManager):
     # from the ComRV stack frame, and the second element is the
     # address of the previous ComRV stack frame.
     def unwind_comrv_stack_frame (self, addr):
+        global max_group_size
+
         ovly_data = overlay_data.fetch ()
         if (not ovly_data.comrv_initialised ()):
             raise RuntimeError ("ComRV is not initialised")
@@ -946,23 +1071,23 @@ class MyOverlayManager (gdb.OverlayManager):
             func_offset = (token >> 17) & 0x3ff
             alignment = prev_frame.align ()
             group_size = ovly_data.group (group_id).size_in_bytes ()
-            max_group_size = 4096
+            max_grp_size = max_group_size.value
             group_offset = (func_offset
                             + ((frame.return_address () - func_offset
-                                - alignment) & (max_group_size - 1)))
+                                - alignment) & (max_grp_size - 1)))
             base_addr = ovly_data.group (group_id).base_address ()
             ra = base_addr + group_offset
 
-            #print ("Unwinder:")
-            #print ("  frame.return_addr: " + hex (frame.return_address ()))
-            #print ("  group_id: " + str (group_id))
-            #print ("  func_offset: " + hex (func_offset))
-            #print ("  alignment: " + hex (alignment))
-            #print ("  group_size: " + hex (group_size))
-            #print ("  max_group_size: " + hex (max_group_size))
-            #print ("  group_offset: " + hex (group_offset))
-            #print ("  base_addr: " + hex (base_addr))
-            #print ("  ra: " + str (ra))
+            debug ("Unwinder:")
+            debug ("  frame.return_addr: " + hex (frame.return_address ()))
+            debug ("  group_id: " + str (group_id))
+            debug ("  func_offset: " + hex (func_offset))
+            debug ("  alignment: " + hex (alignment))
+            debug ("  group_size: " + hex (group_size))
+            debug ("  max_group_size: " + hex (max_grp_size))
+            debug ("  group_offset: " + hex (group_offset))
+            debug ("  base_addr: " + hex (base_addr))
+            debug ("  ra: " + str (ra))
 
         return ra, addr
 

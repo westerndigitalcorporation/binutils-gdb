@@ -120,12 +120,19 @@ class overlay_data:
 
     # Holds information about a single multi-group.
     class _overlay_multi_group:
-        def __init__ (self, index, tokens):
+        def __init__ (self, number, index, tokens):
+            self._number = number
             self._index = index
             self._tokens = tokens
 
         def tokens (self):
             return self._tokens
+
+        def index (self):
+            return self._index
+
+        def number (self):
+            return self._number
 
     # A class to describe an area of memory.  This serves as a base
     # class for the cache region descriptor, and the storage region
@@ -306,17 +313,30 @@ class overlay_data:
             multi_groups = list ()
             all_tokens = list ()
 
-            # This is where multi-group tokens should be loaded, but this
-            # is not done yet.
+            # The start and end of the region containing the
+            # multi-group table.
             mg_start = table_start
             mg_end = table_end
+
+            # A number assigned to each multi-group.  Starts at 0, and
+            # increments by one for each multi-group.
+            mg_num = 0
+
+            # An index assigned to each multi-group.  This is the
+            # index of the first member of the multi-group.
             mg_idx = 0
+
+            # Used to track the index into the multi-group table.
+            idx = 0
+
+            # The tokens within the current multi-group.
             mg_tokens = list ()
 
             while (mg_start < mg_end):
                 # Read a 32-bit overlay token from the multi-group table.
                 ovly_token = overlay_data._read_overlay_token (mg_start)
                 all_tokens.append (ovly_token)
+                idx += 1
 
                 # A token of 0 indicates the end of a multi-group.
                 if (ovly_token == 0):
@@ -331,10 +351,12 @@ class overlay_data:
                     # next.
                     else:
                         multi_groups.append (overlay_data.
-                                             _overlay_multi_group (mg_idx,
+                                             _overlay_multi_group (mg_num,
+                                                                   mg_idx,
                                                                    mg_tokens))
                         # Now reset ready to read the next multi-group.
-                        mg_idx += 1
+                        mg_num += 1
+                        mg_idx = idx
                         mg_tokens = list ()
                 # Otherwise a non-zero token is a member of the multi-group.
                 else:
@@ -570,18 +592,18 @@ def print_current_comrv_state ():
         while (grp_num < ovly_data.multi_group_count ()):
             mg = ovly_data.multi_group (grp_num)
             if (grp_num == 0):
-                print ("  %-7s%-12s%-9s%-8s"
-                       % ("", "", "Overlay", "Function"))
-                print ("  %-7s%-12s%-9s%-8s"
-                       % ("Group", "Token", "Group", "Offset"))
+                print ("  %6s%-7s%-12s%-9s%-8s"
+                       % ("", "", "", "Overlay", "Function"))
+                print ("  %-6s%-7s%-12s%-9s%-8s"
+                       % ("Num", "Index", "Token", "Group", "Offset"))
             else:
-                print ("  %-7s%-12s%-9s%-8s"
-                       % ("---", "---", "---", "---"))
+                print ("  %-6s%-7s%-12s%-9s%-8s"
+                       % ("---", "---", "---", "---", "---"))
             for token in mg.tokens ():
                 g = (token >> 1) & 0xffff
                 offset = ((token >> 17) & 0x3ff) * 4
-                print ("  %-7d0x%08x  %-9d0x%-8x"
-                       % (grp_num, token, g, offset))
+                print ("  %-6d%-7d0x%08x  %-9d0x%-8x"
+                       % (grp_num, mg.index (), token, g, offset))
             grp_num += 1
     else:
         print ("  Not supported in this ComRV build.")

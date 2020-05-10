@@ -284,6 +284,7 @@ public:
               fprintf_unfiltered (gdb_stdlog,
                                   "Multi-group %d:\n", i);
 
+            unsigned primary_count = 0;
             multi_group_desc desc;
             for (int j = 0; j < PyList_Size (lst_obj.get ()); ++j)
               {
@@ -302,25 +303,24 @@ public:
                                       "  (%d) %s\n", j,
                                       core_addr_to_string (addr));
 
-                if (j == 0)
+                CORE_ADDR start, end;
+                if (find_pc_partial_function (addr, NULL, &start, &end)
+                    && start == addr)
                   {
-                    CORE_ADDR start, end;
-
-                    if (!find_pc_partial_function (addr, NULL, &start, &end))
-                      error ("unable to compute function bounds");
-                    if (start != addr)
-                      error ("multi-group address is not start of a function");
-                    if (debug_overlay)
-                      fprintf_unfiltered (gdb_stdlog,
-                                          "    Function: %s -> %s\n",
-                                          core_addr_to_string (start),
-                                          core_addr_to_string (end));
                     desc.base = start;
                     desc.len = end - start;
+                    ++primary_count;
                   }
                 else
                   desc.alt_addr.push_back (addr);
               }
+
+            if (primary_count > 1)
+              error (_("too many (%d) functions with debug information "
+                       "in multi-group %d"), primary_count, i);
+            else if (primary_count == 0)
+              error (_("no functions with debug information in "
+                       "multi-group %d"), i);
             m_multi_groups.push_back (desc);
           }
       }

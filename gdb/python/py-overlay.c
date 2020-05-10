@@ -287,13 +287,13 @@ public:
             multi_group_desc desc;
             for (int j = 0; j < PyList_Size (lst_obj.get ()); ++j)
               {
-                gdbpy_ref<> itm (PyList_GetItem (lst_obj.get (), j));
+                PyObject *itm = PyList_GetItem (lst_obj.get (), j);
                 CORE_ADDR addr;
 
-                if (PyLong_Check (itm.get ()))
-                  addr = (CORE_ADDR) PyLong_AsUnsignedLongLong (itm.get ());
-                else if (PyInt_Check (itm.get ()))
-                  addr = (CORE_ADDR) PyInt_AsLong (itm.get ());
+                if (PyLong_Check (itm))
+                  addr = (CORE_ADDR) PyLong_AsUnsignedLongLong (itm);
+                else if (PyInt_Check (itm))
+                  addr = (CORE_ADDR) PyInt_AsLong (itm);
                 else
                   error ("result is not an address (or numeric)");
 

@@ -137,9 +137,9 @@ public:
       /* TODO: Should we throw an error here?  */
       return 0;
 
-    PyObject *method_obj = PyString_FromString (method_name);
+    gdbpy_ref<> method_obj (PyString_FromString (method_name));
     gdb_assert (method_name != NULL);
-    gdbpy_ref<> result (PyObject_CallMethodObjArgs (obj, method_obj,
+    gdbpy_ref<> result (PyObject_CallMethodObjArgs (obj, method_obj.get (),
                                                     id_obj.get (), NULL));
     if (result == NULL)
       error (_("missing result object"));
@@ -171,9 +171,9 @@ public:
       /* TODO: Should we throw an error here?  */
       return 0;
 
-    PyObject *method_obj = PyString_FromString (method_name);
+    gdbpy_ref<> method_obj (PyString_FromString (method_name));
     gdb_assert (method_name != NULL);
-    gdbpy_ref<> result (PyObject_CallMethodObjArgs (obj, method_obj,
+    gdbpy_ref<> result (PyObject_CallMethodObjArgs (obj, method_obj.get (),
                                                     id_obj.get (), NULL));
     if (result == NULL)
       error (_("missing result object"));
@@ -205,9 +205,9 @@ public:
       /* TODO: Should we throw an error here?  */
       return 0;
 
-    PyObject *method_obj = PyString_FromString (method_name);
+    gdbpy_ref<> method_obj (PyString_FromString (method_name));
     gdb_assert (method_name != NULL);
-    gdbpy_ref<> result (PyObject_CallMethodObjArgs (obj, method_obj,
+    gdbpy_ref<> result (PyObject_CallMethodObjArgs (obj, method_obj.get (),
                                                     idx_obj.get (), NULL));
     if (result == NULL)
       error (_("missing result object"));
@@ -262,7 +262,7 @@ public:
         static const char *method_name2 = "get_multi_group";
         if (!PyObject_HasAttrString (obj, method_name2))
           error ("missing method %s on python overlay manager", method_name2);
-        PyObject *method_obj2 = PyString_FromString (method_name2);
+        gdbpy_ref<> method_obj2 (PyString_FromString (method_name2));
 
         for (int i = 0; i < m_multi_group_count; ++i)
           {
@@ -271,7 +271,7 @@ public:
             if (id_obj == NULL)
               error ("failed to create python integer object");
 
-            gdbpy_ref<> lst_obj (PyObject_CallMethodObjArgs (obj, method_obj2,
+            gdbpy_ref<> lst_obj (PyObject_CallMethodObjArgs (obj, method_obj2.get (),
                                                              id_obj.get (),
                                                              NULL));
             if (lst_obj == NULL)

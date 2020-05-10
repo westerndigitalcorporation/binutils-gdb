@@ -807,10 +807,18 @@ class MyOverlayManager (gdb.OverlayManager):
     def __del__ (self):
         print ('Destructor called for MyOverlayManager')
 
+    # Return a string, where GDB should place the overlay event
+    # breakpoint.
     def event_symbol_name (self):
         debug ("In Python code, event_symbol_name")
         return "_ovly_debug_event"
 
+    # Return an integer, the number of multi-groups.  Return the
+    # special value -1 to indicate ComRV is not yet initialised, and
+    # so we don't know how many multi-groups there are, in this case
+    # GDB will ask again later.  Otherwise return a value greater
+    # than, or equal to zero, GDB will cache this answer and not ask
+    # again.
     def get_multi_group_count (self):
         debug ("In Python get_multi_group_count method")
         ovly_data = overlay_data.fetch ()
@@ -820,6 +828,8 @@ class MyOverlayManager (gdb.OverlayManager):
             return -1
         return ovly_data.multi_group_count ()
 
+    # For multi-group number ID return a list of all the storage area
+    # addresses of all the functions within this multi-group.
     def get_multi_group (self, id):
         ovly_data = overlay_data.fetch ()
         if (not ovly_data.comrv_initialised ()):
@@ -836,6 +846,7 @@ class MyOverlayManager (gdb.OverlayManager):
             res.append (addr)
         return res
 
+    # Return the overlay token from the multi-group table at INDEX.
     def get_multi_group_table_by_index (self, index):
         ovly_data = overlay_data.fetch ()
         if (not ovly_data.comrv_initialised ()):
@@ -844,6 +855,10 @@ class MyOverlayManager (gdb.OverlayManager):
             raise RuntimeError ("Multi-group not supported")
         return ovly_data.get_token_from_multi_group_table (index)
 
+    # Called to read the current state of ComRV, which overlays are
+    # mapped in.  Should call the ADD_MAPPING method on ourselves
+    # (implemented inside GDB) to inform GDB about an active overlay
+    # mapping.
     def read_mappings (self):
         debug ("In Python code, read_mappings")
 

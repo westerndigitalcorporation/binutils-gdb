@@ -963,7 +963,7 @@ class MyOverlayManager (gdb.OverlayManager):
         for token in mg.tokens ():
             g = (token >> 1) & 0xffff
             offset = ((token >> 17) & 0x3ff) * 4
-            addr = self.get_group_unmapped_base_address (g)
+            addr = self.get_group_storage_area_address (g)
             addr += offset
             res.append (addr)
         return res
@@ -1111,24 +1111,21 @@ class MyOverlayManager (gdb.OverlayManager):
         debug ("Size of group %d is %d" % (id, tmp))
         return tmp
 
-    # This is a temporary hack needed to support backtracing.
-    # Ideally, the whole backtracing stack unwind would move into
-    # python, and then this function would not be needed, however, to
-    # do that we will need some serious changes to how GDB's stack
-    # unwinder works.
-    #
-    # For now then we need to expose a mechanism by which we can find
-    # the size of a group given its group ID.
-    def get_group_unmapped_base_address (self, id):
+    # Return the base address, within the storage area, for overlay
+    # group ID.  The base address is the first address of an overlay
+    # group.
+    def get_group_storage_area_address (self, id):
+        debug ("get_group_storage_area_address (%d) = ..." % (id))
         ovly_data = overlay_data.fetch ()
         if (not ovly_data.comrv_initialised ()):
-            # Maybe we should through an error in this case?
-            return 0
+            raise RuntimeError ("ComRV not initialised, overlay "
+                                + "storage area address unknown")
 
         group_desc = ovly_data.group (id)
         tmp = group_desc.base_address ()
 
-        debug ("Base address of group %d is 0x%x" % (id, tmp))
+        debug ("get_group_storage_area_address (%d) = 0x%x"
+               % (id, tmp))
         return tmp
 
     # Return a value indicating if multi-group is compiled into this

@@ -181,6 +181,18 @@ overlay_manager_get_cache_address_if_mapped (CORE_ADDR addr)
 
 /* See overlay.h.  */
 
+CORE_ADDR
+overlay_manager_get_group_unmapped_base_address (int group_id)
+{
+  if (registered_overlay_manager == nullptr)
+    /* TODO: Should we throw an error here?  */
+    return 0;
+
+  return registered_overlay_manager->get_group_unmapped_base_address (group_id);
+}
+
+/* See overlay.h.  */
+
 bool
 overlay_manager_has_multi_groups ()
 {

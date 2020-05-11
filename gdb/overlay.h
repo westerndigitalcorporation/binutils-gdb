@@ -126,6 +126,13 @@ public:
     return false;
   }
 
+  /* HACK: Return the unmapped base address for group GROUP_ID.  */
+  virtual CORE_ADDR get_group_unmapped_base_address (int group_id)
+  {
+    /* TODO: Should this be an error?  */
+    return 0;
+  }
+
   /* HACK: Ideally this would not be needed in a final version of the
      overlay system, but right now I'm not sure how to fully move this code
      into Python.  Maybe it will become clear once everything is working.  */
@@ -255,6 +262,10 @@ extern CORE_ADDR overlay_manager_cache_to_storage_address (CORE_ADDR addr,
    cache, then return the cache address, otherwise, return ADDR.  */
 
 extern CORE_ADDR overlay_manager_get_cache_address_if_mapped (CORE_ADDR addr);
+
+/* Return the unmapped base address of overlay group GROUP_ID.  */
+
+extern CORE_ADDR overlay_manager_get_group_unmapped_base_address (int group_id);
 
 /* Return TRUE if there is any multi-groups in use.  */
 

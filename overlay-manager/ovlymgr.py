@@ -35,6 +35,24 @@ OVERLAY_CACHE_AT_INDEX_TO_SIZE_IN_MIN_UNITS \
 
 #=====================================================================#
 
+# This counts the number of times the ComRV event breakpoint has been
+# hit, and is used to help us decide if ComRV is likely initialised or
+# not yet.
+global_event_breakpoint_hit_count = 0
+
+# Return True if we believe that ComRV should have been initialised,
+# and it is therefore safe to try and read the ComRV tables from
+# memory.  Otherwise, return False.
+def global_has_comrv_been_initialised_yet ():
+    global global_event_breakpoint_hit_count
+
+    # Yuck! Borrow the symbol reading wrapper from overlay_data class.
+    sym_value = overlay_data._read_symbol_value_as_integer (INIT_SYMBOL)
+    return (global_event_breakpoint_hit_count > 0
+            and sym_value != 0)
+
+#=====================================================================#
+
 # A class for the control variable 'set/show debug comrv on|off'.
 class debug_parameter (gdb.Parameter):
     '''Controls debugging messages from the Python Overlay Manager.  This
@@ -570,8 +588,7 @@ class overlay_data:
 
         # Finally, if ComRV has been initialised then load the current state
         # from memory.
-        init_been_called = overlay_data.\
-                           _read_symbol_value_as_integer (INIT_SYMBOL)
+        init_been_called = global_has_comrv_been_initialised_yet ()
         if (init_been_called):
             try:
                 multi_group_offset = overlay_data.\
@@ -671,12 +688,14 @@ def print_current_comrv_state ():
     ovly_data = overlay_data.fetch ()
     if (not ovly_data.comrv_initialised ()):
         print ("ComRV not yet initialisd:")
-        print ("      %s: %d"
+        print ("%40s: %d"
                % (INIT_SYMBOL,
                   int (gdb.parse_and_eval ("%s" % (INIT_SYMBOL)))))
-        print ("     &%s: 0x%x"
-               % (INIT_SYMBOL,
+        print ("%40s: 0x%x"
+               % ("&" + INIT_SYMBOL,
                   int (gdb.parse_and_eval ("&%s" % (INIT_SYMBOL)))))
+        print ("%40s: %d" % ("ComRV event breakpoint hits",
+                             global_event_breakpoint_hit_count))
         return
 
     print ("Overlay Regions:")
@@ -983,6 +1002,13 @@ class MyOverlayManager (gdb.OverlayManager):
     # mapping.
     def read_mappings (self):
         debug ("In Python code, read_mappings")
+
+        # This is a proxy for counting the number of times the ComRV
+        # event breakpoint has been hit.  This works as we know that
+        # GDB will only call this when the event it hit and not
+        # before.
+        global global_event_breakpoint_hit_count
+        global_event_breakpoint_hit_count += 1
 
         global overlay_debug
         if (overlay_debug):

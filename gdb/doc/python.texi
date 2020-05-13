@@ -163,6 +163,7 @@ optional arguments while skipping others.  Example:
                                 using Python.
 * Lazy Strings In Python::      Python representation of lazy strings.
 * Architectures In Python::     Python representation of architectures.
+* Overlay Managers In Python::  Python representation of Overlay Managers.
 * TUI Windows In Python::       Implementing new TUI windows.
 @end menu
 
@@ -5674,6 +5675,141 @@ instruction in bytes.
 @end table
 @end defun
 
+@node Overlay Managers In Python
+@subsubsection Python Overlay Managers
+@cindex Python Overlay Managers
+
+Python code can be used to implement a ComRV based overlay manager
+using the @code{gdb.OverlayManager} class.
+
+A user should create a sub-class of @code{gdb.OverlayManager}, and
+override some or all of the following functions in order to inform
+@value{GDBN} about their Overlay Manager.
+
+@defun OverlayManager.__init__ (reload)
+Create a new overlay manager.  When @var{reload} is @code{True} then
+GDB will reload the overlay manager mapping state each time the event
+breakpoint is hit.
+@end defun
+
+@defun OverlayManager.get_region_data ()
+This function is called to load the region data into @value{GDBN}.
+The region data are the start and end addresses of the storage and
+cache regions.  Inside this function the user should call
+@code{Breakpoint.set_storage_region} and
+@code{Breakpoint.set_cache_region}.
+
+There is no return value from this function.
+@end defun
+
+@defun OverlayManager.set_storage_area (start, end)
+Call this function to tell @value{GDBN} about the overlay storage
+region.  @var{start} is the first address within the storage region,
+and @var{end} is the first address after the storage region.
+@end defun
+
+@defun OverlayManager.set_cache_area (start, end)
+Call this function to tell @value{GDBN} about the overlay cache
+region.  @var{start} is the first address within the cache region,
+and @var{end} is the first address after the cache region.
+@end defun
+
+@defun OverlayManager.event_symbol_name ()
+Return a string that is the symbol where the overlay event breakpoint
+should be placed.
+
+The return value from this function is a Python string.
+@end defun
+
+@defun OverlayManager.get_multi_group_count ()
+Return the number of multi-groups.  If it is not yet know how many
+multi-groups there are (for example ComRV is not yet initialised) then
+return @code{-1}.
+
+The return value from this function is a Python integer.
+@end defun
+
+@defun OverlayManager.get_multi_group (id)
+Each multi-group consists of a set of overlay group tokens, each token
+identifies the storage area address where a copy of a single function
+can be found.  This function returns a list of all these storage area
+address for multi-group @var{id}.
+
+The @var{id} is an index into the multi-group table starting with
+@code{0} for the first multi-group, @code{1} for the second
+multi-group, and so on.
+
+If anything goes wrong then this function should throw an error.
+
+This function returns a list of Python integers, each integer
+represents an address.
+@end defun
+
+@defun OverlayManager.get_multi_group_table_by_index (index)
+Return the overlay token from the multi-group table at index
+@var{index}.  If the token can't be found then this method should
+throw an error.
+
+The return value from this function should be a Python integer.
+@end defun
+
+@defun OverlayManager.read_mappings ()
+This function is called from @value{GDBN} when the overlay event
+breakpoint is hit.  From within this function the function
+@code{OverlayManager.add_mapping} should be called multiple times to
+tell @value{GDBN} about all the currently active mappings.
+
+A call to @code{add_mapping} should be made for every active mapping,
+even if the mapping was already active, before calling
+@code{read_mappings} @value{GDBN} discards all its previously known
+mappings.
+@end defun
+
+@defun OverlayManager.add_mapping (source, destination, length)
+This function should be called from within
+@code{Breakpoint.read_mappings} only to inform @value{GDBN} about a
+single active mapping from the ComRV storage area to the cache area.
+
+Calling @code{add_mapping} from outside @code{read_mappings} is
+undefined, and could leave @value{GDBN} in an unexpected state.
+
+The @var{source} is the first address in the storage area for the
+overlay that is mapped in, @var{destination} is the first address in
+the cache area for where the overlay is mapped to.  The @var{length}
+is the length of the overlay group.
+@end defun
+
+@defun OverlayManager.get_comrv_return_from_callee_label ()
+Return the address of the ComRV label to which overlay function
+return.  If this address can't be found then return @code{0}.  The
+return value from this function should be a Python integer.
+@end defun
+
+@defun OverlayManager.unwind_comrv_stack_frame (address)
+Called to unwind the ComRV stack.  The @var{address} is the address
+for a ComRV stack entry.  This function should return a tuple of two
+items.  The first item is the return address extracted from the ComRV
+stack represented as a Python integer.
+
+The second item in the tuple is the updated ComRV stack pointer.  This
+is the ComrV stack address after all required frames have been popped
+off.
+
+If anything goes wrong then this function should throw an error.
+@end defun
+
+@defun OverlayManager.get_group_size (id)
+Return the size, in bytes, of the overlay group @var{id}.  The
+@var{id} is the index into the overlay group table.
+@end defun
+
+@defun OverlayManager.get_group_storage_area_address (id)
+Return the first address within the storage area for overlay group
+@var{id}.  The @var{id} is the index into the overlay group table.
+
+If the storage area can't be determined then an error should be
+thrown.
+@end defun
 @node TUI Windows In Python
 @subsubsection Implementing new TUI windows
 @cindex Python TUI Windows

@@ -12132,9 +12132,9 @@ force_breakpoint_reinsertion (struct bp_location *bl)
     }
 }
 
-/* Called to support ComRV overlay debugging.  This is called when we hit
-   the overlay event breakpoint and can be used to fix up any breakpoints
-   that were created before the overlay manager was in place.  */
+/* Called to support ComRV overlay debugging.  This is called whenever
+   breakpoints are modified and is used to create additional breakpoint
+   locations for multi-group breakpoints.  */
 static void
 refresh_multi_group_breakpoints ()
 {
@@ -12202,6 +12202,49 @@ refresh_multi_group_breakpoints ()
           }
       }
   }
+}
+
+/* Called to support ComRV overlay debugging.  This is called when
+   breakpoint locations are modified, and is used to convert breakpoints
+   placed directly into the cache into breakpoints in the storage region.  */
+static void
+refresh_overlay_breakpoints_in_cache_only ()
+{
+  struct breakpoint *b;
+  bool bp_modified = false;
+
+  ALL_BREAKPOINTS (b)
+  {
+    struct bp_location *bl;
+
+    for (bl = b->loc; bl != NULL; bl = bl->next)
+      {
+        CORE_ADDR storage_address;
+
+        if (overlay_manager_is_cache_address (bl->address, &storage_address)
+            && bl->overlay_target_info.placed_address == 0)
+          {
+            /* This breakpoint was placed into the cache region directly.
+               If the cache address corresponds to a region that was mapped
+               in from the storage region, then translate the cache address
+               into a storage area address.  */
+            if (storage_address != bl->address)
+              {
+                bl->address = storage_address;
+                bp_modified = true;
+              }
+            else
+              error (_("attempt to place breakpoint into unmapped cache "
+                       "region at %s"), core_addr_to_string (bl->address));
+          }
+      }
+  }
+
+  /* If we updated any of the breakpoint locations then sort the location
+     list.  */
+  if (bp_modified)
+    std::sort (bp_locations, bp_locations + bp_locations_count,
+               bp_location_is_less_than);
 }
 
 /* Check that a list of COUNT breakpoint locations, with the first location
@@ -12277,6 +12320,7 @@ update_global_location_list (enum ugll_insert_mode insert_mode)
   bp_locations = NULL;
   bp_locations_count = 0;
 
+  refresh_overlay_breakpoints_in_cache_only ();
   if (overlay_manager_has_multi_groups ())
     refresh_multi_group_breakpoints ();
 

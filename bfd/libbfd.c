@@ -180,6 +180,13 @@ _bfd_void_bfd_asection (bfd *abfd ATTRIBUTE_UNUSED,
 {
 }
 
+int
+_bfd_int_asection_link_0 (asection *sec ATTRIBUTE_UNUSED,
+                          struct bfd_link_info *link ATTRIBUTE_UNUSED)
+{
+  return 0;
+}
+
 long
 _bfd_norelocs_get_reloc_upper_bound (bfd *abfd ATTRIBUTE_UNUSED,
 				     asection *sec ATTRIBUTE_UNUSED)

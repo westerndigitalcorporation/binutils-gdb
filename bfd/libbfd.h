@@ -229,6 +229,8 @@ extern void _bfd_void_bfd_link
   (bfd *, struct bfd_link_info *) ATTRIBUTE_HIDDEN;
 extern void _bfd_void_bfd_asection
   (bfd *, asection *) ATTRIBUTE_HIDDEN;
+extern int _bfd_int_asection_link_0
+  (asection *, struct bfd_link_info *) ATTRIBUTE_HIDDEN;
 
 extern bfd *_bfd_new_bfd_contained_in
   (bfd *) ATTRIBUTE_HIDDEN;
@@ -546,7 +548,7 @@ extern struct bfd_link_hash_entry *_bfd_nolink_bfd_define_start_stop
 #define _bfd_nolink_bfd_link_check_relocs \
   _bfd_generic_link_check_relocs
 #define _bfd_nolink_bfd_get_section_user_sort_data \
-  ((int (*) (asection *, struct bfd_link_info *)) _bfd_int_bfd_0)
+  _bfd_int_asection_link_0
 
 /* Routines to use for BFD_JUMP_TABLE_DYNAMIC for targets which do not
    have dynamic symbols or relocs.  Use BFD_JUMP_TABLE_DYNAMIC

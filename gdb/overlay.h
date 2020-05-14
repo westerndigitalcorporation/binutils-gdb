@@ -244,19 +244,19 @@ extern void overlay_manager_hit_event_breakpoint (void);
 
 extern bool overlay_manager_is_overlay_breakpoint_loc (struct bp_location *bl);
 
-/* If ADDR is in the overlay cache region then return the corresponding
-   address from the overlay storage region.  When ADDR is a member of a
-   multi-group and RESOLVE_MULTI_GROUP_P is false then the storage address
-   return is for the precise multi-group member that was mapped in.
-   However, when RESOLVE_MULTI_GROUP_P is true the storage address returned
-   is instead for the multi-group member that has debug information
-   available for it.  Remember, only one multi-group member will have
-   debug, while all the others will not.
+/* If ADDR is in the overlay cache region then return a suitable address
+   from the storage region.
 
-   If ADDR is not in the cache region then just return ADDR.  */
+   For a non-multi-group overlay then the corresponding address from the
+   storage region is returned.
 
-extern CORE_ADDR overlay_manager_cache_to_storage_address (CORE_ADDR addr,
-                                                      bool resolve_multi_group_p = false);
+   For multi-group overlays though, the address returned is the storage
+   area address that has debug information, remember, only one overlay will
+   have debug information for a particular multi-group.
+
+   If ADDR is not in the cache region, then just return ADDR.  */
+
+extern CORE_ADDR overlay_manager_cache_to_storage_address (CORE_ADDR addr);
 
 /* If ADDR is a storage area address, and is currently mapped into the
    cache, then return the cache address, otherwise, return ADDR.  */

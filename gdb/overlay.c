@@ -155,14 +155,17 @@ overlay_manager_is_overlay_breakpoint_loc (struct bp_location *bl)
 /* See overlay.h.  */
 
 CORE_ADDR
-overlay_manager_cache_to_storage_address (CORE_ADDR addr,
-                                          bool resolve_multi_group_p)
+overlay_manager_cache_to_storage_address (CORE_ADDR addr)
 {
   CORE_ADDR storage_addr;
 
-  if (!overlay_manager_is_cache_address (addr, &storage_addr,
-                                         resolve_multi_group_p))
+  if (!overlay_manager_is_cache_address (addr, &storage_addr, true))
     storage_addr = addr;
+  if (debug_overlay > 9)
+    fprintf_unfiltered (gdb_stdlog,
+                        "overlay_manager_cache_to_storage_address "
+                        "(%s) = %s\n", core_addr_to_string (addr),
+                        core_addr_to_string (storage_addr));
   return storage_addr;
 }
 
@@ -175,6 +178,27 @@ overlay_manager_get_cache_address_if_mapped (CORE_ADDR addr)
 
   if (!overlay_manager_is_storage_address (addr, &cache_addr))
     cache_addr = addr;
+  else if (cache_addr == addr)
+    {
+      /* This is a storage area address, but we didn't immediately find a
+         cache address for where this storage area address is mapped in.
+
+         However, consider the case of the storage area being a multi-group
+         address, in this case, there might be an alternative storage area
+         address that is mapped in.  */
+      CORE_ADDR tmp
+        = registered_overlay_manager->map_to_primary_multi_group_addr (addr);
+      CORE_ADDR offset;
+      std::vector<CORE_ADDR> alt
+        = registered_overlay_manager->find_multi_group (tmp, &offset);
+      for (const CORE_ADDR &a : alt)
+        {
+          if (!overlay_manager_is_storage_address ((a + offset), &cache_addr))
+            error (_("address was expected to be in the storage area"));
+          if (cache_addr != (a + offset))
+            break;
+        }
+    }
 
   return cache_addr;
 }

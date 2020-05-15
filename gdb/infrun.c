@@ -6590,6 +6590,13 @@ process_event_stop_test (struct execution_control_state *ecs)
 	  keep_going (ecs);
 	  return;
 	}
+      /* If pc is in overlay cache, fill_in_stop_func will set stop_func_start
+         to the start of the cache section rather than the start of the overlay
+         function.  Change stop_pc to the storage address so that
+         stop_func_start gets populated with the storage address for the
+         function start.  */
+      ecs->event_thread->suspend.stop_pc =
+	overlay_manager_cache_to_storage_address (ecs->event_thread->suspend.stop_pc);
       fill_in_stop_func (gdbarch, ecs);
       if (ecs->event_thread->suspend.stop_pc == ecs->stop_func_start
 	  && execution_direction == EXEC_REVERSE)

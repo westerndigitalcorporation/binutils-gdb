@@ -321,11 +321,14 @@ riscv_make_ovlplt_entry (bfd_vma addr, uint32_t *entry)
 
 /* Linked list of overlay group ids.
    NOTE: Offset will not change with relaxation, so this value MUST NOT be
-         relied upon for token generation, use the output_offset instead.  */
+         relied upon for token generation, use the output_offset instead.
+   NOTE: processed_offset is used for mapfile generation and is calculated
+         during the final link stage.  */
 struct ovl_func_group_info
 {
   bfd_vma id;
-  bfd_vma offset;
+  bfd_vma unrelaxed_offset;
+  bfd_vma processed_offset;
   struct ovl_func_group_info *next;
 };
 
@@ -540,7 +543,8 @@ print_func_entry (struct ovl_func_hash_entry *entry,
   struct ovl_func_group_info *head = entry->groups;
   while (head != NULL)
     {
-      fprintf (stderr, " %lu (@%lu)", head->id, head->offset);
+			/* FIXME: Use relaxed offset if available.  */
+      fprintf (stderr, " %lu (@%lu)", head->id, head->unrelaxed_offset);
       head = head->next;
     }
   fprintf(stderr, "\n");
@@ -570,7 +574,8 @@ ovl_update_func (struct bfd_hash_table *table,
   this_node =  objalloc_alloc ((struct objalloc *) table->memory,
 				sizeof (struct ovl_func_group_info));
   this_node->id = group;
-  this_node->offset = 0;
+  this_node->unrelaxed_offset = 0;
+  this_node->processed_offset = 0;
   this_node->next = NULL;
 
   if (entry->groups == NULL)
@@ -2405,7 +2410,7 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	      /* Allocate the symbol's offset into the output section for the
 	         group. This corresponds to the current size of the output
 	         section.  */
-	      func_group_info->offset = group_list_entry->group_size;
+	      func_group_info->unrelaxed_offset = group_list_entry->group_size;
 
 	      /* Keep track of the first function which was allocated to this
 	         group.  */
@@ -2849,6 +2854,7 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
 
       bfd_vma offset_into_group = target_sym_input_sec->output_offset
                                   - group_first_input_sec->output_offset;
+      func_groups->groups->processed_offset = offset_into_group;
 
       if (riscv_comrv_debug)
 	{
@@ -2956,6 +2962,7 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
 
 	      bfd_vma offset_into_group = target_sym_input_sec->output_offset
 					  - group_first_input_sec->output_offset;
+	      func_group_info->processed_offset = offset_into_group;
 
 	      if (riscv_comrv_debug)
 		{
@@ -6511,7 +6518,8 @@ riscv_elf_overlay_sort_value (asection *s, struct bfd_link_info *info)
       ovl_group_list_lookup (&htab->ovl_group_list, func_group_info->id, FALSE);
   BFD_ASSERT(group_list_entry != NULL);
 
-  bfd_vma offset = group_list_entry->ovlgrpdata_offset + func_group_info->offset;
+  bfd_vma offset = group_list_entry->ovlgrpdata_offset +
+		   func_group_info->unrelaxed_offset;
 
   if (riscv_comrv_debug)
     fprintf(stderr, " - Offset of %s is %lx\n", s->name, offset);
@@ -6597,15 +6605,19 @@ riscv_elf_overlay_printmap_elfNNlriscv(bfd *obfd,
 	  while (func_instance != NULL && func_instance->id != g_id)
 	    func_instance = func_instance->next;
 	  BFD_ASSERT (func_instance != NULL);
+	  /* Assert that if we are reporting an offset we have the post-relax
+	     value.  */
+	  if (func_instance->unrelaxed_offset != 0)
+	    BFD_ASSERT (func_instance->processed_offset != 0);
 
 	  uint32_t token;
 	  if (func->multigroup)
 	    token = func->multigroup_token;
 	  else
-	    token = ovltoken (0, 0, func_instance->offset / 4, g_id);
+	    token = ovltoken (0, 0, func_instance->processed_offset / 4, g_id);
 
 	  fprintf (mapfile, "  > %8lx: %-20s (token %08x",
-		   func_instance->offset + start_addr, function, token);
+		   func_instance->processed_offset + start_addr, function, token);
 
 	  if (func->multigroup)
 	    fprintf (mapfile, ", multigroup");

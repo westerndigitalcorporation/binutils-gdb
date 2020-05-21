@@ -3120,7 +3120,7 @@ perform_relocation (const reloc_howto_type *howto,
     case R_RISCV_TLS_DTPREL32:
     case R_RISCV_TLS_DTPREL64:
     case R_RISCV_OVL32:
-		case R_RISCV_OVLPLT32:
+    case R_RISCV_OVLPLT32:
       break;
 
     case R_RISCV_DELETE:

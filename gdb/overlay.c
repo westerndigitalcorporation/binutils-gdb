@@ -325,20 +325,6 @@ bool overlay_manager_is_cache_address (CORE_ADDR address,
 
 /* See overlay.h.  */
 
-void
-overlay_manager_unwind_comrv_stack_frame (CORE_ADDR comrv_sp,
-                                          CORE_ADDR *old_comrv_sp,
-                                          CORE_ADDR *ra)
-{
-  if (registered_overlay_manager == nullptr)
-    error (_("no overlay manager registered"));
-
-  registered_overlay_manager->unwind_comrv_stack_frame (comrv_sp,
-                                                        old_comrv_sp, ra);
-}
-
-/* See overlay.h.  */
-
 CORE_ADDR
 overlay_manager_get_comrv_return_label (void)
 {

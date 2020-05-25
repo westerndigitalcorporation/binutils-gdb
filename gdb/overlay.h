@@ -170,12 +170,6 @@ public:
     return addr;
   }
 
-  /* Unwind ComRV stack frame at SP, return previous stack pointer in
-     PREV_SP, and the return address in RA.  If anything prevents unwinding
-     then an error is thrown.  */
-  virtual void unwind_comrv_stack_frame (CORE_ADDR sp, CORE_ADDR *prev_sp,
-                                         CORE_ADDR *ra) = 0;
-
   /* Return the label within ComRV that indicates a function is returning
      through ComRV.  This will only be called once, the return value is
      cache within GDB.
@@ -301,18 +295,6 @@ extern bool overlay_manager_is_storage_address (CORE_ADDR address,
 extern bool overlay_manager_is_cache_address (CORE_ADDR address,
                                               CORE_ADDR *storage_address = nullptr,
                                               bool resolve_multi_group_p = false);
-
-/* Called during stack unwinding to unwind an entry from the ComRV stack at
-   COMRV_SP.  A return address within the overlay storage area is
-   returned in RA, and the previous value of the ComRV stack pointer is
-   returned in OLD_COMRV_SP.
-
-   If anything goes wrong, or the stack can't be unwound then an error is
-   thrown.  */
-
-extern void overlay_manager_unwind_comrv_stack_frame (CORE_ADDR comrv_sp,
-                                                      CORE_ADDR *old_comrv_sp,
-                                                      CORE_ADDR *ra);
 
 /* Return the magic address which indicates that a function return is going
    back through ComRV.  This will only be called once, and the return value

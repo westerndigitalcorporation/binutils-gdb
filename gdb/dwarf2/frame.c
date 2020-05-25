@@ -49,13 +49,6 @@
 
 #include <algorithm>
 
-#include "overlay.h"
-#include "riscv-tdep.h"
-#include "gdbcmd.h"
-
-/* Debugging for the ComRV frame unwind information.  */
-static unsigned int dwarf_comrv_debug = 0;
-
 struct comp_unit;
 
 /* Call Frame Information (CFI).  */
@@ -972,13 +965,6 @@ struct dwarf2_frame_cache
      dwarf2_tailcall_frame_unwind unwinder so this field does not apply for
      them.  */
   void *tailcall_cache;
-
-  /* The following fields are ComRV related.  When the unwinding is done
-     fully in Python code then hopefully these changes should not be
-     needed.  */
-  bool returns_through_comrv;
-  bool prev_t3_valid_p;
-  CORE_ADDR prev_t3;
 };
 
 static struct dwarf2_frame_cache *
@@ -1240,8 +1226,8 @@ dwarf2_frame_this_id (struct frame_info *this_frame, void **this_cache,
 }
 
 static struct value *
-dwarf2_frame_prev_register_1 (struct frame_info *this_frame, void **this_cache,
-                              int regnum)
+dwarf2_frame_prev_register (struct frame_info *this_frame, void **this_cache,
+			    int regnum)
 {
   struct gdbarch *gdbarch = get_frame_arch (this_frame);
   struct dwarf2_frame_cache *cache =
@@ -1257,7 +1243,7 @@ dwarf2_frame_prev_register_1 (struct frame_info *this_frame, void **this_cache,
   if (cache->tailcall_cache)
     {
       struct value *val;
-
+      
       val = dwarf2_tailcall_prev_register_first (this_frame,
 						 &cache->tailcall_cache,
 						 regnum);
@@ -1332,136 +1318,6 @@ dwarf2_frame_prev_register_1 (struct frame_info *this_frame, void **this_cache,
     default:
       internal_error (__FILE__, __LINE__, _("Unknown register rule."));
     }
-}
-
-/* Return the address of the comrv_ret_from_callee label, or 0 if the label
-   can't be found.  The address is only looked up once and cached if
-   found.  */
-static CORE_ADDR
-get_comrv_ret_from_callee_addr (struct frame_info *this_frame)
-{
-  static CORE_ADDR cached_addr = 0;
-  if (cached_addr != 0)
-    {
-      if (dwarf_comrv_debug > 0)
-        fprintf_unfiltered (gdb_stdlog,
-                            "get_comrv_ret_from_callee_addr = %s\t(cached)\n",
-                            core_addr_to_string (cached_addr));
-      return cached_addr;
-    }
-  cached_addr = overlay_manager_get_comrv_return_label ();
-  if (dwarf_comrv_debug > 0)
-    fprintf_unfiltered (gdb_stdlog,
-                        "get_comrv_ret_from_callee_addr = %s\t(computed)\n",
-                        core_addr_to_string (cached_addr));
-  return cached_addr;
-}
-
-static struct value *
-dwarf2_frame_prev_register (struct frame_info *this_frame, void **this_cache,
-                            int regnum)
-{
-  struct value *val
-    = dwarf2_frame_prev_register_1 (this_frame, this_cache, regnum);
-
-  int t3_regnum = RISCV_ZERO_REGNUM + 28;
-
-  /* Get the address of the return entry point in ComRV.  If the address
-     can't be found (indicated by an address of 0 being returned here, then
-     no special processing is required.  */
-  CORE_ADDR comrv_return_addr = get_comrv_ret_from_callee_addr (this_frame);
-  if (comrv_return_addr == 0)
-    {
-      if (dwarf_comrv_debug > 0 && (regnum == RISCV_PC_REGNUM
-                                    || regnum == t3_regnum))
-        fprintf_unfiltered (gdb_stdlog,
-                            "Accessing $pc or $t3 (in frame %d), but not "
-                            "applying ComRV unwinding\n",
-                            frame_relative_level (this_frame));
-      return val;
-    }
-
-  if (regnum == RISCV_PC_REGNUM)
-    {
-      struct dwarf2_frame_cache *cache =
-        dwarf2_frame_cache (this_frame, this_cache);
-
-      if (dwarf_comrv_debug > 0)
-        fprintf_unfiltered (gdb_stdlog,
-                            "Accessing previous $pc in frame %d (cache %p)\n",
-                            frame_relative_level (this_frame), cache);
-
-      /* We need to check to see if the return address is the entry point
-         back into ComRV, if it is then we need to compute a replacement
-         value, one that is based on reading the return address from the
-         ComRV stack.  */
-      if (value_as_address (val) == comrv_return_addr)
-        {
-          /* Record that this frame returns through ComRV.  */
-          cache->returns_through_comrv = true;
-
-          /* Grab the value of register $t3 is this frame.  */
-          CORE_ADDR val_t3 = address_from_register (t3_regnum,
-                                                    this_frame);
-          try
-            {
-              CORE_ADDR prev_t3, ra;
-
-              overlay_manager_unwind_comrv_stack_frame (val_t3, &prev_t3,
-                                                        &ra);
-              cache->prev_t3_valid_p = true;
-              cache->prev_t3 = prev_t3;
-              return frame_unwind_got_constant (this_frame, regnum, ra);
-            }
-          catch (const gdb_exception_error &ex)
-            {
-              exception_fprintf (gdb_stderr, ex,
-                                 _("Error while unwinding comrv stack "
-                                   "frame at `%s': "),
-                                 core_addr_to_string (val_t3));
-              return val;
-            }
-        }
-      else
-        cache->returns_through_comrv = false;
-    }
-  else if (regnum == t3_regnum)
-    {
-      struct dwarf2_frame_cache *cache =
-        dwarf2_frame_cache (this_frame, this_cache);
-
-      if (dwarf_comrv_debug > 0)
-        fprintf_unfiltered (gdb_stdlog,
-                            "Accessing previous $t3 in frame %d (cache %p)\n",
-                            frame_relative_level (this_frame), cache);
-
-      /* To unwind $t3 we first unwind the $pc.  In all likely hood the
-         $pc will have already been unwound by the time we get here, so
-         this should be a very quick access into the regcache.  When we
-         unwind the $pc we update the cached prev_pc in the frame cache.  */
-      (void) dwarf2_frame_prev_register_1 (this_frame, this_cache,
-                                           RISCV_PC_REGNUM);
-
-      if (cache->returns_through_comrv)
-        {
-          if (dwarf_comrv_debug > 0)
-            fprintf_unfiltered (gdb_stdlog,
-                                "Unwinding $t3 in comrv frame, previous value is %s\n",
-                                core_addr_to_string (cache->prev_t3));
-          gdb_assert (cache->prev_t3_valid_p);
-          return frame_unwind_got_constant (this_frame, regnum, cache->prev_t3);
-        }
-      else
-        {
-          /* No ComRV unwinding needed here.  */
-          if (dwarf_comrv_debug > 0)
-            fprintf_unfiltered (gdb_stdlog,
-                                "Unwinding $t3 in normal frame, previous value is in $t3\n");
-          return frame_unwind_got_register (this_frame, t3_regnum, t3_regnum);
-        }
-    }
-
-  return val;
 }
 
 /* Proxy for tailcall_frame_dealloc_cache for bottom frame of a virtual tail
@@ -2450,16 +2306,6 @@ architecture that doesn't support them will have no effect."),
 			   &set_dwarf_cmdlist,
 			   &show_dwarf_cmdlist);
 
-  add_setshow_zuinteger_cmd ("dwarf-comrv", no_class, &dwarf_comrv_debug, _("\
-Set debugging of the dwarf comrv frame unwinding."), _("\
-Show debugging of the dwarf comrv frame unwinding."), _("\
-When enabled (non-zero) information from the DWARF frame unwinder relating\n\
-to the special actions needed to unwind ComRV frames will be displayed.\n\
-A value of 1 (one) provides basic information.\n\
-A value greater than 1 provides more verbose information."),
-			     NULL,
-			     NULL,
-			     &setdebuglist, &showdebuglist);
 #if GDB_SELF_TEST
   selftests::register_test_foreach_arch ("execute_cfa_program",
 					 selftests::execute_cfa_program_test);

@@ -5785,19 +5785,6 @@ return.  If this address can't be found then return @code{0}.  The
 return value from this function should be a Python integer.
 @end defun
 
-@defun OverlayManager.unwind_comrv_stack_frame (address)
-Called to unwind the ComRV stack.  The @var{address} is the address
-for a ComRV stack entry.  This function should return a tuple of two
-items.  The first item is the return address extracted from the ComRV
-stack represented as a Python integer.
-
-The second item in the tuple is the updated ComRV stack pointer.  This
-is the ComrV stack address after all required frames have been popped
-off.
-
-If anything goes wrong then this function should throw an error.
-@end defun
-
 @defun OverlayManager.get_group_size (id)
 Return the size, in bytes, of the overlay group @var{id}.  The
 @var{id} is the index into the overlay group table.

@@ -117,60 +117,6 @@ public:
     return std::move (m_mappings);
   }
 
-  /* See overlay.h.  */
-  void unwind_comrv_stack_frame (CORE_ADDR sp, CORE_ADDR *prev_sp,
-                                 CORE_ADDR *ra) override
-  {
-    gdb_assert (gdb_python_initialized);
-    gdbpy_enter enter_py (get_current_arch (), current_language);
-
-    PyObject *obj = (PyObject *) m_obj;
-
-    /* Check the Python code implements the required method.  */
-    static const char *method_name = "unwind_comrv_stack_frame";
-    if (!PyObject_HasAttrString (obj, method_name))
-      error (_("missing unwind_comrv_stack method in Python OverlayManager"));
-
-    /* Prepare the address to pass to the Python code.  */
-    gdbpy_ref<> addr_obj (PyLong_FromLongLong (sp));
-    if (addr_obj == NULL)
-      error (_("failed to create python object for stack address"));
-
-    /* Call the Python method and capture the return value.  */
-    gdbpy_ref<> method_obj (PyString_FromString (method_name));
-    gdb_assert (method_name != NULL);
-    gdbpy_ref<> result (PyObject_CallMethodObjArgs (obj, method_obj.get (),
-                                                    addr_obj.get (), NULL));
-    if (result == NULL)
-      error (_("missing result object from %s"), method_name);
-
-    if (!PySequence_Check (result.get ()))
-      error (_("result from %s is not a sequence"), method_name);
-
-    if (PySequence_Size (result.get ()) != 2)
-      error (_("incorrect result length from %s"), method_name);
-
-    gdbpy_ref<> list_iter (PyObject_GetIter (result.get ()));
-    gdbpy_ref<> itm0 (PyIter_Next (list_iter.get ()));
-    gdbpy_ref<> itm1 (PyIter_Next (list_iter.get ()));
-
-    if (PyLong_Check (itm0.get ()))
-      *ra = (CORE_ADDR) PyLong_AsUnsignedLongLong (itm0.get ());
-    else if (PyInt_Check (itm0.get ()))
-      *ra = (CORE_ADDR) PyInt_AsLong (itm0.get ());
-    else
-      error (_("first return value from %s can't be converted "
-               "to an address"), method_name);
-
-    if (PyLong_Check (itm1.get ()))
-      *prev_sp = (CORE_ADDR) PyLong_AsUnsignedLongLong (itm1.get ());
-    else if (PyInt_Check (itm1.get ()))
-      *prev_sp = (CORE_ADDR) PyInt_AsLong (itm1.get ());
-    else
-      error (_("second return value from %s can't be converted "
-               "to an address"), method_name);
-  }
-
   /* Return the address in the storage area for overlay group GROUP_ID.  */
   CORE_ADDR get_group_unmapped_base_address (int group_id) override
   {

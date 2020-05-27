@@ -126,8 +126,8 @@ public:
     return false;
   }
 
-  /* HACK: Return the unmapped base address for group GROUP_ID.  */
-  virtual CORE_ADDR get_group_unmapped_base_address (int group_id)
+  /* Return the storage address for the callee that ComRV is about to call.  */
+  virtual CORE_ADDR get_callee_primary_storage_area_address ()
   {
     /* TODO: Should this be an error?  */
     return 0;
@@ -257,10 +257,6 @@ extern CORE_ADDR overlay_manager_cache_to_storage_address (CORE_ADDR addr);
 
 extern CORE_ADDR overlay_manager_get_cache_address_if_mapped (CORE_ADDR addr);
 
-/* Return the unmapped base address of overlay group GROUP_ID.  */
-
-extern CORE_ADDR overlay_manager_get_group_unmapped_base_address (int group_id);
-
 /* Return TRUE if there is any multi-groups in use.  */
 
 extern bool overlay_manager_has_multi_groups ();
@@ -304,5 +300,11 @@ extern bool overlay_manager_is_cache_address (CORE_ADDR address,
    case the unwind code will not apply any special ComRV rules.  */
 
 extern CORE_ADDR overlay_manager_get_comrv_return_label (void);
+
+/* Find the address that we will hit right after stepping out of the overlay
+   manager.  */
+extern CORE_ADDR find_ovlmgr_resume_addr (struct gdbarch *gdbarch,
+             struct frame_info *frame,
+             const char *func_name);
 
 #endif /* !defined OVERLAY_H */

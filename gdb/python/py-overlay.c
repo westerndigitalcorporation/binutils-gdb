@@ -28,8 +28,7 @@
 #define READ_MAPPINGS_METHOD "read_mappings"
 #define ADD_MAPPING_METHOD "add_mapping"
 #define GET_MULTI_GROUP_COUNT_METHOD "get_multi_group_count"
-#define GET_GROUP_BASE_ADDR_METHOD "get_group_storage_area_address"
-
+#define GET_CALLEE_PRIMARY_STORAGE_AREA_ADDRESS "get_callee_primary_storage_area_address"
 #define SET_STORAGE_REGION_METHOD "set_storage_region"
 #define SET_CACHE_REGION_METHOD "set_cache_region"
 
@@ -117,8 +116,7 @@ public:
     return std::move (m_mappings);
   }
 
-  /* Return the address in the storage area for overlay group GROUP_ID.  */
-  CORE_ADDR get_group_unmapped_base_address (int group_id) override
+  CORE_ADDR get_callee_primary_storage_area_address () override
   {
     gdb_assert (gdb_python_initialized);
     gdbpy_enter enter_py (get_current_arch (), current_language);
@@ -127,20 +125,15 @@ public:
 
     /* The base class gdb.OverlayManager provides a default implementation
        so this method should always be found.  */
-    static const char *method_name = GET_GROUP_BASE_ADDR_METHOD;
+    static const char *method_name = GET_CALLEE_PRIMARY_STORAGE_AREA_ADDRESS;
     if (!PyObject_HasAttrString (obj, method_name))
-      /* TODO: Should we throw an error here?  */
-      return 0;
-
-    gdbpy_ref<> id_obj (PyLong_FromLongLong ((long long) group_id));
-    if (id_obj == NULL)
       /* TODO: Should we throw an error here?  */
       return 0;
 
     gdbpy_ref<> method_obj (PyString_FromString (method_name));
     gdb_assert (method_name != NULL);
     gdbpy_ref<> result (PyObject_CallMethodObjArgs (obj, method_obj.get (),
-                                                    id_obj.get (), NULL));
+                                                    NULL));
     if (result == NULL)
       error (_("missing result object"));
 

@@ -6541,28 +6541,6 @@ process_event_stop_test (struct execution_control_state *ecs)
       }
       return;
 
-    case BPSTAT_WHAT_CLEAR_OVLCALL_RESUME:
-      if (debug_infrun)
-	fprintf_unfiltered (gdb_stdlog,
-	  "infrun: BPSTAT_WHAT_CLEAR_OVLCALL_RESUME\n");
-      disable_ovlmgr_breakpoint (bp_ovlmgr_call_master);
-      inferior_thread ()->control.step_resume_breakpoint = NULL;
-
-      ecs->event_thread->stepping_over_breakpoint = 1;
-      keep_going (ecs);
-      return;
-
-    case BPSTAT_WHAT_CLEAR_OVLEXIT_RESUME:
-      if (debug_infrun)
-	fprintf_unfiltered (gdb_stdlog,
-	  "infrun: BPSTAT_WHAT_CLEAR_OVLEXIT_RESUME\n");
-      disable_ovlmgr_breakpoint (bp_ovlmgr_exit_master);
-      inferior_thread ()->control.step_resume_breakpoint = NULL;
-
-      ecs->event_thread->stepping_over_breakpoint = 1;
-      keep_going (ecs);
-      return;
-
     case BPSTAT_WHAT_SINGLE:
       if (debug_infrun)
 	fprintf_unfiltered (gdb_stdlog, "infrun: BPSTAT_WHAT_SINGLE\n");
@@ -6722,18 +6700,21 @@ process_event_stop_test (struct execution_control_state *ecs)
   fill_in_stop_func (gdbarch, ecs);
 
   if (skip_ovlmgr
+      && ecs->event_thread->control.step_range_end != 1
       && ecs->stop_func_name != 0
       && ecs->stop_func_start == ecs->event_thread->suspend.stop_pc)
     {
-      bptype type = lookup_ovlmgr_bp_type(ecs->stop_func_name);
-      if (type != bp_none)
-        {
-	  if (debug_infrun)
-	  fprintf_unfiltered (gdb_stdlog, "infrun: CB: enable %s bp\n",
-			      ecs->stop_func_name);
-
-	  breakpoint *bp = enable_ovlmgr_breakpoint (type);
-	  inferior_thread ()->control.step_resume_breakpoint = bp;
+      symtab_and_line sr_sal;
+      /* If we have just entered the overlay manager and skipping is on,
+         sr_sal.pc will be the destination address we expect to hit immediately
+         after exiting the overlay manager, otherwise 0.  */
+      sr_sal.pc = find_ovlmgr_resume_addr (gdbarch, frame, ecs->stop_func_name);
+      if (sr_sal.pc != 0)
+	{
+          /* Set a step-resume breakpoint on the destination address.  */
+	  sr_sal.section = find_pc_overlay (sr_sal.pc);
+	  sr_sal.pspace = get_frame_program_space (frame);
+	  insert_step_resume_breakpoint_at_sal (gdbarch, sr_sal, null_frame_id);
 
 	  keep_going (ecs);
 	  return;

@@ -205,18 +205,6 @@ overlay_manager_get_cache_address_if_mapped (CORE_ADDR addr)
 
 /* See overlay.h.  */
 
-CORE_ADDR
-overlay_manager_get_group_unmapped_base_address (int group_id)
-{
-  if (registered_overlay_manager == nullptr)
-    /* TODO: Should we throw an error here?  */
-    return 0;
-
-  return registered_overlay_manager->get_group_unmapped_base_address (group_id);
-}
-
-/* See overlay.h.  */
-
 bool
 overlay_manager_has_multi_groups ()
 {
@@ -333,6 +321,47 @@ overlay_manager_get_comrv_return_label (void)
   if (registered_overlay_manager != nullptr)
     address = registered_overlay_manager->get_comrv_return_label ();
   return address;
+}
+
+/* Return the storage address for the callee that ComRV is about to call.  To
+    be called when at comrv_invoke_callee.  */
+static CORE_ADDR
+overlay_manager_get_callee_unmapped_address ()
+{
+  CORE_ADDR addr;
+
+  if (registered_overlay_manager == nullptr)
+    /* TODO: Should we throw an error here?  */
+    return 0;
+
+  addr = registered_overlay_manager->get_callee_primary_storage_area_address ();
+
+  return addr;
+}
+
+/* If func_name is a comrv entry point, find the address that will be hit
+   immediately after exiting comrv, otherwise return 0.  */
+
+CORE_ADDR
+find_ovlmgr_resume_addr (struct gdbarch *gdbarch, struct frame_info *frame,
+			 const char *func_name)
+{
+  CORE_ADDR addr;
+
+  if (!strncmp ("comrvEntry", func_name, strlen (func_name))
+      || !strncmp ("comrvEntry_context_switch", func_name, strlen (func_name)))
+    addr = overlay_manager_get_callee_unmapped_address ();
+  else if (!strncmp ("comrv_ret_from_callee", func_name, strlen (func_name))
+	   || !strncmp ("comrv_ret_from_callee_context_switch", func_name,
+			strlen (func_name)))
+    addr = frame_unwind_caller_pc (frame);
+  else
+    return 0;
+
+  if (debug_overlay)
+    fprintf_unfiltered (gdb_stdlog,
+                        "Stepped into overlay manager at %s\n", func_name);
+  return addr;
 }
 
 void _initialize_overlay (void);

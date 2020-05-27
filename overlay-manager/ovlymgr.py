@@ -26,8 +26,10 @@ OVERLAY_STORAGE_END_SYMBOL = "OVERLAY_END_OF_OVERLAYS"
 OVERLAY_CACHE_START_SYMBOL = "__OVERLAY_CACHE_START__"
 OVERLAY_CACHE_END_SYMBOL = "__OVERLAY_CACHE_END__"
 COMRV_RETURN_FROM_CALLEE_LABEL = "comrv_ret_from_callee"
+COMRV_RETURN_FROM_CALLEE_CONTEXT_SWITCH_LABEL = "comrv_ret_from_callee_context_switch"
 COMRV_INVOKE_CALLEE_LABEL = "comrv_invoke_callee"
 COMRV_ENTRY_LABEL = "comrvEntry"
+COMRV_ENTRY_CONTEXT_SWITCH_LABEL = "comrvEntry_context_switch"
 COMRV_EXIT_LABEL = "comrv_exit_ret_to_caller"
 
 # The following symbols are actually used as format strings.  They must
@@ -421,8 +423,12 @@ class overlay_data:
                 = get_symbol_address (COMRV_INVOKE_CALLEE_LABEL)
             self.ret_from_callee \
                 = get_symbol_address (COMRV_RETURN_FROM_CALLEE_LABEL)
+            self.comrv_ret_from_callee_context_switch \
+                = get_symbol_address (COMRV_RETURN_FROM_CALLEE_CONTEXT_SWITCH_LABEL)
             self.comrv_entry \
                 = get_symbol_address (COMRV_ENTRY_LABEL)
+            self.comrv_entry_context_switch \
+                = get_symbol_address (COMRV_ENTRY_CONTEXT_SWITCH_LABEL)
             self.comrv_exit \
                 = get_symbol_address (COMRV_EXIT_LABEL)
             self.enabled = (self.comrv_invoke_callee
@@ -1119,6 +1125,43 @@ class MyOverlayManager (gdb.OverlayManager):
                % (id, tmp))
         return tmp
 
+    # Get the callee that the overlay manager is calling.  This method should
+    # only be called when the pc is at one of the comrv entry points for a call.
+    def get_callee_primary_storage_area_address (self):
+        # HACK: Increment global_event_breakpoint_hit_count so
+        # overlay_data.fetch can assume comrv has been initialised.
+        global global_event_breakpoint_hit_count
+        global_event_breakpoint_hit_count += 1
+
+        ovly_data = overlay_data.fetch ()
+        if (not ovly_data.comrv_initialised ()):
+            raise RuntimeError ("ComRV is not initialised")
+
+        # Assert pc is at one of the comrv entry points for a call.
+        labels = ovly_data.labels()
+        pc = int (gdb.parse_and_eval ("$pc"))
+        assert (pc in [labels.comrv_entry,
+                       labels.comrv_entry_context_switch])
+
+        token = int (gdb.parse_and_eval ("$t5"))
+
+        if (token & 0x1) == 0:
+          # The callee is a non-overlay function and token is destination
+          # address.
+          return token;
+
+        if ((token >> 31) & 0x1) == 1:
+            multi_group_id = (token >> 1) & 0xffff
+            token = ovly_data.get_token_from_multi_group_table (multi_group_id)
+
+        group_id = (token >> 1) & 0xffff
+        func_offset = ((token >> 17) & 0x3ff) * 4;
+
+        ba = self.get_group_storage_area_address (group_id);
+        addr = ba + func_offset;
+
+        return addr
+
 class comrv_unwinder (Unwinder):
     """
     A class to aid in unwinding through the ComRV engine.
@@ -1157,6 +1200,58 @@ class comrv_unwinder (Unwinder):
             raise RuntimeError ("Multi-group not supported")
         return ovly_data.get_token_from_multi_group_table (index)
 
+    # If ra is a cache address return the corresponding primary storage address,
+    # otherwise return ra unchanged.
+
+    def _get_primary_storage_area_ra (self, ra, addr):
+        global max_group_size
+        orig_ra = ra
+
+        ovly_data = overlay_data.fetch ()
+        if (not ovly_data.comrv_initialised ()):
+            raise RuntimeError ("ComRV is not initialised")
+        is_mg = ovly_data.is_multi_group_enabled ()
+
+        cache_start = ovly_data.cache ().start_address ()
+        cache_end = ovly_data.cache ().end_address ()
+        if (ra >= cache_start and ra < cache_end):
+            prev_frame = comrv_stack_frame (addr, is_mg)
+
+            if ((prev_frame.token () & 0x1) != 0x1):
+                raise RuntimeError ("returning to overlay function, "
+                                    + "second stack frame token is "
+                                    + str (prev_frame.token ()))
+
+            token = prev_frame.token ()
+            if (((token >> 31) & 0x1) == 0x1):
+                if (prev_frame.multi_group_index () == -1):
+                    raise RuntimeError ("mutli-group stack token with no valid token index")
+                idx = prev_frame.multi_group_index ()
+                token = self._get_multi_group_table_by_index (idx)
+
+            group_id = (token >> 1) & 0xffff
+            func_offset = (token >> 17) & 0x3ff
+            alignment = prev_frame.align ()
+            group_size = ovly_data.group (group_id).size_in_bytes ()
+            max_grp_size = max_group_size.value
+            group_offset = (func_offset
+                            + ((orig_ra - func_offset
+                                - alignment) & (max_grp_size - 1)))
+            base_addr = ovly_data.group (group_id).base_address ()
+            ra = base_addr + group_offset
+
+            debug ("Unwinder:")
+            debug ("  frame.return_addr: " + hex (orig_ra))
+            debug ("  group_id: " + str (group_id))
+            debug ("  func_offset: " + hex (func_offset))
+            debug ("  alignment: " + hex (alignment))
+            debug ("  group_size: " + hex (group_size))
+            debug ("  max_group_size: " + hex (max_grp_size))
+            debug ("  group_offset: " + hex (group_offset))
+            debug ("  base_addr: " + hex (base_addr))
+            debug ("  ra: " + str (ra))
+        return ra
+
     def _unwind (self, addr):
         """Perform an unwind of one ComRV stack frame.  ADDR is the
         address of a frame on the ComRV stack.  This function returns
@@ -1164,8 +1259,6 @@ class comrv_unwinder (Unwinder):
         stack frame pointer.
 
          If the stack can't be unwound then an error is thrown."""
-        global max_group_size
-
         ovly_data = overlay_data.fetch ()
         if (not ovly_data.comrv_initialised ()):
             raise RuntimeError ("ComRV is not initialised")
@@ -1195,45 +1288,29 @@ class comrv_unwinder (Unwinder):
         # Grab the return address from the ComRV stack.  This can be
         # the address of an overlay, or non-overlay function.
         ra = frame.return_address ()
-        cache_start = ovly_data.cache ().start_address ()
-        cache_end = ovly_data.cache ().end_address ()
-        if (ra >= cache_start and ra < cache_end):
-            prev_frame = comrv_stack_frame (addr, is_mg)
 
-            if ((prev_frame.token () & 0x1) != 0x1):
-                raise RuntimeError ("returning to overlay function, "
-                                    + "second stack frame token is "
-                                    + str (prev_frame.token ()))
+        return self._get_primary_storage_area_ra (ra, addr), addr
 
-            token = prev_frame.token ()
-            if (((token >> 31) & 0x1) == 0x1):
-                if (prev_frame.multi_group_index () == -1):
-                    raise RuntimeError ("mutli-group stack token with no valid token index")
-                idx = prev_frame.multi_group_index ()
-                token = self._get_multi_group_table_by_index (idx)
+    def _unwind_at_ret_from_callee_context_switch (self, pending_frame, labels):
+        # Create UnwindInfo.  Usually the frame is identified by the stack
+        # pointer and the program counter.
+        sp = pending_frame.read_register ("sp")
+        pc = gdb.Value (labels.comrv_entry).cast (self.void_ptr_t)
+        unwind_info = pending_frame.create_unwind_info (self.frame_id (sp, pc))
 
-            group_id = (token >> 1) & 0xffff
-            func_offset = (token >> 17) & 0x3ff
-            alignment = prev_frame.align ()
-            group_size = ovly_data.group (group_id).size_in_bytes ()
-            max_grp_size = max_group_size.value
-            group_offset = (func_offset
-                            + ((frame.return_address () - func_offset
-                                - alignment) & (max_grp_size - 1)))
-            base_addr = ovly_data.group (group_id).base_address ()
-            ra = base_addr + group_offset
+        # Find the values of the registers in the caller's frame and
+        # save them in the result:
+        t3 = int (pending_frame.read_register ("t3").cast (self.void_ptr_t))
+        ra = int (pending_frame.read_register ("ra"))
+        ra = self._get_primary_storage_area_ra (ra, t3)
+        unwind_info.add_saved_register("pc", gdb.Value (ra).cast (self.void_ptr_t))
+        unwind_info.add_saved_register("t3", gdb.Value (t3).cast (self.void_ptr_t))
+        unwind_info.add_saved_register("sp", pending_frame.read_register ("sp"))
+        # TODO: We should pass through all of the other registers that
+        # are not corrupted by passing through ComRV.
 
-            debug ("Unwinder:")
-            debug ("  frame.return_addr: " + hex (frame.return_address ()))
-            debug ("  group_id: " + str (group_id))
-            debug ("  func_offset: " + hex (func_offset))
-            debug ("  alignment: " + hex (alignment))
-            debug ("  group_size: " + hex (group_size))
-            debug ("  max_group_size: " + hex (max_grp_size))
-            debug ("  group_offset: " + hex (group_offset))
-            debug ("  base_addr: " + hex (base_addr))
-            debug ("  ra: " + str (ra))
-        return ra, addr
+        # Return the result:
+        return unwind_info
 
     def _unwind_through_comrv_stack (self, pending_frame, labels):
         # Create UnwindInfo.  Usually the frame is identified by the stack
@@ -1302,8 +1379,15 @@ class comrv_unwinder (Unwinder):
         # invoke the callee and afterwards.  This will work for the
         # easy cases 1 and 2 above.  Case 3 wouldn't work before, and
         # still doesn't work with this mechanism.
+        #
+        # Update: a new specific case is now handled - re-entering comrv at
+        # comrv_ret_from_callee_context_switch after a context switch whilst
+        # returning from a callee.  At this point, the comrv stack relating to
+        # the callee has already been popped.
         if (pc <= labels.comrv_invoke_callee):
             return self._unwind_direct (pending_frame, labels)
+        if (pc == labels.comrv_ret_from_callee_context_switch):
+            return self._unwind_at_ret_from_callee_context_switch (pending_frame, labels)
         else:
             return self._unwind_through_comrv_stack (pending_frame, labels)
 

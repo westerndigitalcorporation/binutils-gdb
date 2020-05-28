@@ -364,6 +364,19 @@ find_ovlmgr_resume_addr (struct gdbarch *gdbarch, struct frame_info *frame,
   return addr;
 }
 
+struct frame_info *
+find_ovlmgr_finish_frame (struct frame_info *frame) {
+  const char *name;
+  find_pc_partial_function (get_frame_pc (frame), &name, NULL, NULL);
+  /* comrv_ret_from_callee is the only place in comrv that finish is expected to
+     stop.  */
+  if (!strncmp ("comrv_ret_from_callee", name, strlen (name)))
+    /* Get the frame that comrv will return to.  */
+    frame = frame_find_by_id (frame_unwind_caller_id (frame));
+
+  return frame;
+}
+
 void _initialize_overlay (void);
 void
 _initialize_overlay (void)

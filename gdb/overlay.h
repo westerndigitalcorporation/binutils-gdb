@@ -307,4 +307,9 @@ extern CORE_ADDR find_ovlmgr_resume_addr (struct gdbarch *gdbarch,
              struct frame_info *frame,
              const char *func_name);
 
+/* FRAME is the frame that is about to be resumed to in a finish command.  If
+   FRAME is in comrv and skipping is on, then return the frame that comrv would
+   return to, otherwise return FRAME unchanged.  */
+extern struct frame_info * find_ovlmgr_finish_frame (struct frame_info *frame);
+
 #endif /* !defined OVERLAY_H */

@@ -56,6 +56,7 @@
 #include "gdbsupport/gdb_optional.h"
 #include "source.h"
 #include "cli/cli-style.h"
+#include "overlay.h"
 
 /* Local functions: */
 
@@ -1856,6 +1857,11 @@ finish_forward (struct finish_command_fsm *sm, struct frame_info *frame)
   struct gdbarch *gdbarch = get_frame_arch (frame);
   struct symtab_and_line sal;
   struct thread_info *tp = inferior_thread ();
+
+  /* If FRAME is in the overlay manager and skipping is on, use the frame that
+     the overlay manager will return to instead.  */
+  if (skip_ovlmgr)
+    frame = find_ovlmgr_finish_frame (frame);
 
   sal = find_pc_line (get_frame_pc (frame), 0);
   sal.pc = get_frame_pc (frame);

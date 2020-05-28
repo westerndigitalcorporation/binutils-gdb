@@ -325,4 +325,8 @@ struct displaced_step_inferior_state
   gdb::byte_vector step_saved_copy;
 };
 
+/* Control variable for overlay manager skipping.  When this is non-zero the
+   overlay manager is skipped during stepping.  */
+extern unsigned int skip_ovlmgr;
+
 #endif /* INFRUN_H */

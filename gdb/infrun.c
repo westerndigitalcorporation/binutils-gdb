@@ -301,8 +301,8 @@ update_observer_mode (void)
   observer_mode = observer_mode_1 = newval;
 }
 
-/* Control variable for overlay manager skipping.  When this is non-zero the
-   overlay manager is skipped during stepping.  */
+/* See infrun.h.  */
+
 unsigned int skip_ovlmgr = 0;
 
 /* Handle 'show skip ovlmgr overlay'.  */

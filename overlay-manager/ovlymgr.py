@@ -21,6 +21,7 @@ OVERLAY_MIN_CACHE_ENTRY_SIZE_IN_BYTES = 512
 
 # Various symbols that are read in order to parse ComRV.
 MULTI_GROUP_OFFSET_SYMBOL = "g_stComrvCB.ucMultiGroupOffset"
+COMRV_INFO_SYMBOL = "g_uiComrvInfo"
 OVERLAY_STORAGE_START_SYMBOL = "OVERLAY_START_OF_OVERLAYS"
 OVERLAY_STORAGE_END_SYMBOL = "OVERLAY_END_OF_OVERLAYS"
 OVERLAY_CACHE_START_SYMBOL = "__OVERLAY_CACHE_START__"
@@ -440,11 +441,11 @@ class overlay_data:
     # method.
     class _overlay_data_inner:
         def __init__ (self, cache_descriptor, storage_descriptor, groups_data,
-                      is_multi_group):
+                      mg_index_offset):
             self._cache_descriptor = cache_descriptor
             self._groups_data = groups_data
             self._storage_descriptor = storage_descriptor
-            self._is_multi_group = is_multi_group
+            self._multi_group_index_offset = mg_index_offset
 
         def cache (self):
             return self._cache_descriptor
@@ -465,7 +466,10 @@ class overlay_data:
             return self._groups_data.get_multi_group_count ()
 
         def is_multi_group_enabled (self):
-            return self._is_multi_group
+            return self._multi_group_index_offset > 0
+
+        def multi_group_index_offset (self):
+            return self._multi_group_index_offset
 
         def get_token_from_multi_group_table (self, index):
             return self._groups_data.get_token_from_multi_group_table (index)
@@ -695,14 +699,24 @@ class overlay_data:
         else:
             groups_data = None
 
-        is_multi_group = multi_group_offset > 0
+        # Work out the size in bits of the multi-group index on the comrv stack.
+        # A size of zero means this ComRV does not have multi-group support.
+        if multi_group_offset > 0:
+          multi_group_index_offset = overlay_data.\
+              _read_symbol_value_as_integer (COMRV_INFO_SYMBOL) & 0xF
+          if (multi_group_index_offset not in [11, 14]):
+              raise RuntimeError ("Invalid multi-group index offset (expected "
+                  + " 11 or 14, but got " + str(multi_group_index_offset) + ")")
+        else:
+          multi_group_index_offset = 0
 
         # Now package all of the components into a single class
         # instance that we return.  We only cache the object if ComRV
         # has been initialised, in this way we shouldn't get stuck
         # with a cached, not initialised object.
         obj = overlay_data._overlay_data_inner (cache_desc, storage_desc,
-                                                groups_data, is_multi_group)
+                                                groups_data,
+                                                multi_group_index_offset)
         if (init_been_called):
             overlay_data._instance = obj
         return obj
@@ -862,14 +876,14 @@ def print_current_comrv_state ():
 
 # Model a single frame on the ComRV stack.
 class comrv_stack_frame:
-    def __init__ (self, addr, is_mg):
+    def __init__ (self, addr, mg_index_offset):
         self._frame_addr = addr
         self._return_addr = mem_reader.read_32_bit (addr)
         self._token = mem_reader.read_32_bit (addr + 4)
         self._offset = mem_reader.read_16_bit (addr + 8)
         self._align = mem_reader.read_8_bit (addr + 10)
-        if (is_mg):
-            if (self._offset == 12):
+        if (mg_index_offset > 0):
+            if (mg_index_offset == 11):
                 index = mem_reader.read_8_bit (addr + 11)
                 self._mg_index = sign_extend (index, 8)
             else:
@@ -954,6 +968,7 @@ Alignment - The alignment field from the ComRV stack, alignment to size of
         ovly_data = overlay_data.fetch ()
         is_initialised = ovly_data.comrv_initialised ()
         is_mg = ovly_data.is_multi_group_enabled ()
+        mg_index_offset = ovly_data.multi_group_index_offset ()
         overlay_data.clear ()
 
         if (not is_initialised):
@@ -969,7 +984,7 @@ Alignment - The alignment field from the ComRV stack, alignment to size of
             print ("%5s %10s %10s %10s %10s %6s"
                    % ("Frame", "Address", "R/A", "Token", "Alignment", "Size"))
         while (True):
-            frame = comrv_stack_frame (t3_addr, is_mg)
+            frame = comrv_stack_frame (t3_addr, mg_index_offset)
             if (is_mg):
                 print ("%5s %10s %10s %10s %10s %6s %6s"
                        % (("#%d" % (depth)),
@@ -1210,12 +1225,12 @@ class comrv_unwinder (Unwinder):
         ovly_data = overlay_data.fetch ()
         if (not ovly_data.comrv_initialised ()):
             raise RuntimeError ("ComRV is not initialised")
-        is_mg = ovly_data.is_multi_group_enabled ()
+        mg_index_offset = ovly_data.multi_group_index_offset ()
 
         cache_start = ovly_data.cache ().start_address ()
         cache_end = ovly_data.cache ().end_address ()
         if (ra >= cache_start and ra < cache_end):
-            prev_frame = comrv_stack_frame (addr, is_mg)
+            prev_frame = comrv_stack_frame (addr, mg_index_offset)
 
             if ((prev_frame.token () & 0x1) != 0x1):
                 raise RuntimeError ("returning to overlay function, "
@@ -1262,18 +1277,18 @@ class comrv_unwinder (Unwinder):
         ovly_data = overlay_data.fetch ()
         if (not ovly_data.comrv_initialised ()):
             raise RuntimeError ("ComRV is not initialised")
-        is_mg = ovly_data.is_multi_group_enabled ()
+        mg_index_offset = ovly_data.multi_group_index_offset ()
 
         # Create a stack frame object at ADDR to represent the stack
         # frame we are unwinding.
         labels = ovly_data.labels ()
-        frame = comrv_stack_frame (addr, is_mg)
+        frame = comrv_stack_frame (addr, mg_index_offset)
         assert (labels.ret_from_callee != None)
         while (frame.return_address () == labels.ret_from_callee
                and frame.return_address () != 0
                and frame.offset () != 0xdead):
             addr += frame.offset ()
-            frame = comrv_stack_frame (addr, is_mg)
+            frame = comrv_stack_frame (addr, mg_index_offset)
 
         # Check to see if we have hit the top of the ComRV Stack.
         if ((frame.return_address () == 0
@@ -1447,15 +1462,15 @@ class comrv_frame_filter ():
                 t3 = self._frame.inferior_frame ().\
                           read_register ("t3").cast (self.uint_t)
                 ovly_data = overlay_data.fetch ()
-                is_mg = ovly_data.is_multi_group_enabled ()
-                comrv_frame = comrv_stack_frame (t3, is_mg)
+                mg_index_offset = ovly_data.multi_group_index_offset ()
+                comrv_frame = comrv_stack_frame (t3, mg_index_offset)
                 labels = ovly_data.labels ()
                 assert (labels.ret_from_callee != None)
                 while (comrv_frame.return_address () == labels.ret_from_callee
                        and comrv_frame.return_address () != 0
                        and comrv_frame.offset () != 0xdead):
                     t3 += comrv_frame.offset ()
-                    comrv_frame = comrv_stack_frame (t3, is_mg)
+                    comrv_frame = comrv_stack_frame (t3, mg_index_offset)
                 token = comrv_frame.token ()
             return [_sym_value ("token", gdb.Value (token).cast (self.uint_t))]
 

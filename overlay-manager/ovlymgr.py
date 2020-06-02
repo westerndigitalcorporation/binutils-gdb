@@ -704,8 +704,12 @@ class overlay_data:
         # Work out the size in bits of the multi-group index on the comrv stack.
         # A size of zero means this ComRV does not have multi-group support.
         if multi_group_offset > 0:
-          multi_group_index_offset = overlay_data.\
-              _read_symbol_value_as_integer (COMRV_INFO_SYMBOL) & 0xF
+          info_sym = overlay_data.\
+                     _read_symbol_value_as_integer (COMRV_INFO_SYMBOL)
+          if (info_sym == None):
+              raise RuntimeError ("Couldn't read info symbol `%s'"
+                                  % COMRV_INFO_SYMBOL)
+          multi_group_index_offset = info_sym & 0xF
           if (multi_group_index_offset not in [11, 14]):
               raise RuntimeError ("Invalid multi-group index offset (expected "
                   + " 11 or 14, but got " + str(multi_group_index_offset) + ")")

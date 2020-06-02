@@ -1,5 +1,6 @@
 import gdb
 import re
+import sys
 
 from gdb.unwinder import Unwinder
 from gdb.FrameDecorator import FrameDecorator
@@ -222,6 +223,7 @@ def debug (string):
         return
 
     print (string)
+    sys.stdout.flush()
 
 # Helper class, create an instance of this to temporarily turn on
 # debug for the enclosing scope, and turn debug off when we leave the

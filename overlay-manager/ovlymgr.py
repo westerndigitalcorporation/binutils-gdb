@@ -1063,12 +1063,12 @@ class MyOverlayManager (gdb.OverlayManager):
     # again.
     def get_multi_group_count (self):
         debug ("In Python get_multi_group_count method")
+        mg_count = -1
         ovly_data = overlay_data.fetch ()
-        if (not ovly_data.comrv_initialised ()):
-            # If ComRV is not yet initialised then return -1 to
-            # indicate that GDB should ask again later.
-            return -1
-        return ovly_data.multi_group_count ()
+        if (ovly_data.comrv_initialised ()):
+            mg_count = ovly_data.multi_group_count ()
+        debug ("In Python get_multi_group_count method = %d" % (mg_count))
+        return mg_count
 
     # For multi-group number ID return a list of all the storage area
     # addresses of all the functions within this multi-group.

@@ -388,8 +388,19 @@ pending_framepy_read_register (PyObject *self, PyObject *args)
 	 a real register or a so called "user" register, like "pc",
 	 which maps to a real register.  In the past,
 	 get_frame_register_value() was used here, which did not
-	 handle the user register case.  */
-      val = value_of_register (regnum, pending_frame->frame_info);
+	 handle the user register case.
+
+         APB: Switch back from value_of_register to
+         get_frame_register_value - value_of_register creates a lazy
+         register value, which relies on the frame_id, which is what we're
+         trying to figure out in this function.  Switching back is OK for
+         RISC-V as we have no user registers, however, we'll need to come
+         up with a proper fix before this can be pushed upstream.  */
+      struct gdbarch *gdbarch = get_frame_arch (pending_frame->frame_info);
+      if (regnum >= gdbarch_num_cooked_regs (gdbarch))
+        error (_("attempt to access user register from python unwinder"));
+
+      val = get_frame_register_value (pending_frame->frame_info, regnum);
       if (val == NULL)
         PyErr_Format (PyExc_ValueError,
                       "Cannot read register %d from frame.",

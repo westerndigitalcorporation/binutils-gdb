@@ -639,6 +639,8 @@ tdesc_architecture (const struct target_desc *target_desc)
 const char *
 tdesc_architecture_name (const struct target_desc *target_desc)
 {
+  if (target_desc->arch == nullptr)
+    return nullptr;
   return target_desc->arch->printable_name;
 }
 

@@ -386,8 +386,14 @@ void print_xml_feature::visit_pre (const target_desc *e)
 #ifndef IN_PROCESS_AGENT
   string_appendf (*m_buffer, "<?xml version=\"1.0\"?>\n");
   string_appendf (*m_buffer, "<!DOCTYPE target SYSTEM \"gdb-target.dtd\">\n");
-  string_appendf (*m_buffer, "<target>\n<architecture>%s</architecture>\n",
-		  tdesc_architecture_name (e));
+  string_appendf (*m_buffer, "<target>\n");
+
+  /* Both architecture and osabi are defined as optional elements in
+     gdb/features/gdb-target.dtd.  Only print them if they exist.  */
+  const char *architecture = tdesc_architecture_name (e);
+  if (architecture != nullptr)
+    string_appendf (*m_buffer, "<architecture>%s</architecture>\n",
+                    architecture);
 
   const char *osabi = tdesc_osabi_name (e);
   if (osabi != nullptr)

@@ -59,6 +59,7 @@
 #include "riscv-ravenscar-thread.h"
 #include "overlay.h"
 #include "regset.h"
+#include "xml-tdesc.h"
 
 /* The stack must be 16-byte aligned.  */
 #define SP_ALIGNMENT 16
@@ -3177,20 +3178,25 @@ static struct regset riscv_csrset =
   riscv_csrmap, regcache_supply_regset, regcache_collect_regset
 };
 
-// Use riscv_csr_feature to complet riscv_csrmap.  */
+/* Construct riscv_csrmap using CSRs from target description.  */
 
 static void
-riscv_create_csrmap ()
+riscv_create_csrmap (struct gdbarch *gdbarch,
+		     const struct tdesc_feature *feature_csr)
 {
   int i = 0;
 
+  /* riscv_csrmap will contain an entry for each CSR in the order listed in the
+     target description.  */
   riscv_csrmap
-    = new struct regcache_map_entry[riscv_csr_feature.registers.size() + 1];
-  for (auto &reg : riscv_csr_feature.registers)
+    = new struct regcache_map_entry[feature_csr->registers.size() + 1];
+  for (auto &csr : feature_csr->registers)
     {
-      riscv_csrmap[i++] = {1, reg.regnum, 0};
+      int regnum = user_reg_map_name_to_regnum (gdbarch, csr->name.c_str(),
+						csr->name.length());
+      riscv_csrmap[i++] = {1, regnum, 0};
     }
-  // mark the end of the array
+  /* Mark the end of the array.  */
   riscv_csrmap[i] = {0};
   riscv_csrset.regmap = riscv_csrmap;
 }
@@ -3323,13 +3329,70 @@ riscv_corefile_thread (struct thread_info *info,
      args->note_size, args->stop_signal);
 }
 
-static int
-riscv_count_csrs (struct gdbarch *gdbarch) {
-  int count = 0;
-  for (auto reg : riscv_csr_feature.registers)
-    if (gdbarch_register_reggroup_p (gdbarch, reg.regnum, all_reggroup))
-      count++;
-  return count;
+/* Read target description from a corefile.  */
+
+static const struct target_desc *
+riscv_core_read_description (struct gdbarch *gdbarch, struct target_ops *target,
+			     bfd *abfd)
+{
+  struct bfd_section *section;
+  bfd_size_type size;
+
+  section = bfd_get_section_by_name (abfd, ".tdesc");
+  if (section == nullptr)
+    {
+      warning (_("Core file does not contain .tdesc section\n"));
+      return nullptr;
+    }
+
+  size = bfd_section_size (section);
+  if (size == 0)
+    {
+      warning (_(".tdesc is empty\n"));
+      return nullptr;
+    }
+
+  gdb::char_vector contents (size);
+  if (!bfd_get_section_contents (abfd, section, contents.data(), (file_ptr) 0,
+				 size))
+    {
+      warning (_("Failed to read .tdesc from core file\n"));
+      return nullptr;
+    }
+
+  const struct target_desc *tdesc
+    = string_read_description_xml (contents.data ());
+
+  if (tdesc != nullptr)
+    fprintf_unfiltered(gdb_stdout, "Target description read from core file\n");
+
+  return tdesc;
+}
+
+/* Records the current target description for core file note section.  */
+
+static void
+riscv_corefile_target_description (struct riscv_corefile_thread_data *data)
+{
+  const struct target_desc *tdesc = gdbarch_target_desc (data->gdbarch);
+
+  if (tdesc == nullptr)
+    return;
+
+  const char *tdesc_xml = tdesc_get_features_xml (tdesc);
+
+  if (tdesc_xml == nullptr || strlen (tdesc_xml) == 0)
+    return;
+
+  /* Skip the leading '@'.  */
+  const char *tdesc_xml_no_at = tdesc_xml + 1;
+  /* Include the null terminator.  */
+  size_t size = strlen(tdesc_xml_no_at) + 1;
+
+  /* tdesc_xml+1 skips leading '@' added by tdesc_get_features_xml.  */
+  data->note_data = (char *) elfcore_write_register_note
+      (data->obfd, data->note_data, data->note_size,
+       ".tdesc", tdesc_xml_no_at, size);
 }
 
 /* Define hook for core file support.  */
@@ -3343,6 +3406,7 @@ riscv_iterate_over_regset_sections (struct gdbarch *gdbarch,
   /* GPRs */
   cb (".reg", (32 * riscv_isa_xlen (gdbarch)), (32 * riscv_isa_xlen (gdbarch)),
       &riscv_gregset, NULL, cb_data);
+
   /* FPRs - skipped if no floating point registers present */
   if (riscv_isa_flen (gdbarch) > 0)
     cb (".reg2",
@@ -3350,16 +3414,27 @@ riscv_iterate_over_regset_sections (struct gdbarch *gdbarch,
         (32 * riscv_isa_flen (gdbarch)) + 4,
          &riscv_fregset, NULL, cb_data);
   //TODO RISC-V currently has one virtual reg "PRIV" which could also be dumped
+
   /* CSRs  */
-  int csr_count = riscv_count_csrs (gdbarch);
-  /*TODO Save a list of CSR addresses stored in the corefile.  This is needed
-     because we don't have the target description when reading the core file.
-  */
-  if (csr_count > 0)
-    cb (".reg-riscv-csr",
-	(riscv_csr_feature.registers.size() * riscv_isa_xlen (gdbarch)),
-	(riscv_csr_feature.registers.size() * riscv_isa_xlen (gdbarch)),
-	 &riscv_csrset, NULL, cb_data);
+  const struct target_desc *tdesc = gdbarch_target_desc (gdbarch);
+
+  /* Do not dump/load any CSRs if there is no target description or the target
+     description does not contain any CSRs.  */
+  if (tdesc != nullptr)
+    {
+      //TODO add some debug msgs
+      const struct tdesc_feature *feature_csr
+        = tdesc_find_feature (tdesc, riscv_csr_feature.name);
+      if (feature_csr != nullptr)
+	{
+	  riscv_create_csrmap (gdbarch, feature_csr);
+	  if (feature_csr->registers.size())
+	    cb (".reg-riscv-csr",
+		(feature_csr->registers.size() * riscv_isa_xlen (gdbarch)),
+		(feature_csr->registers.size() * riscv_isa_xlen (gdbarch)),
+		&riscv_csrset, NULL, cb_data);
+	}
+    }
 }
 
 /* Determine which signal stopped execution.  */
@@ -3426,7 +3501,10 @@ riscv_make_corefile_notes (struct gdbarch *gdbarch, bfd *obfd, int *note_size)
       riscv_corefile_thread (thr, &thread_args);
     }
 
+  riscv_corefile_target_description (&thread_args);
+
   note_data = thread_args.note_data;
+
   if (!note_data)
     return NULL;
 
@@ -3686,10 +3764,14 @@ riscv_gdbarch_init (struct gdbarch_info info,
   set_gdbarch_gnu_triplet_regexp (gdbarch, riscv_gnu_triplet_regexp);
 
   /* Functions for handling bare metal corefile generation.  These will be
-     overridden by RISC-V Linux targets.  */
+     overridden by RISC-V Linux / FreeBSD targets.  */
   set_gdbarch_make_corefile_notes (gdbarch, riscv_make_corefile_notes);
   set_gdbarch_iterate_over_regset_sections
     (gdbarch, riscv_iterate_over_regset_sections);
+
+  /* This override is only required for bare-metal core file support.  */
+  if (info.osabi == GDB_OSABI_NONE)
+    set_gdbarch_core_read_description (gdbarch, riscv_core_read_description);
 
   /* Hook in OS ABI-specific overrides, if they have been registered.  */
   gdbarch_init_osabi (info, gdbarch);
@@ -3851,7 +3933,6 @@ void
 _initialize_riscv_tdep ()
 {
   riscv_create_csr_aliases ();
-  riscv_create_csrmap ();
   riscv_init_reggroups ();
 
   gdbarch_register (bfd_arch_riscv, riscv_gdbarch_init, NULL);

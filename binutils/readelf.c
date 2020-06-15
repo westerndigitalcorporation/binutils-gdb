@@ -17481,6 +17481,8 @@ get_note_type (Filedata * filedata, unsigned e_type)
 	return _("NT_PRPSINFO (prpsinfo structure)");
       case NT_TASKSTRUCT:
 	return _("NT_TASKSTRUCT (task structure)");
+      case NT_TDESC:
+        return _("NT_TDESC (target description xml string)");
       case NT_PRXFPREG:
 	return _("NT_PRXFPREG (user_xfpregs structure)");
       case NT_PPC_VMX:

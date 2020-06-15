@@ -2732,6 +2732,8 @@ extern char *elfcore_write_aarch_pauth
   (bfd *, char *, int *, const void *, int);
 extern char *elfcore_write_riscv_csr
   (bfd *, char *, int *, const void *, int);
+extern char *elfcore_write_tdesc
+  (bfd *, char *, int *, const void *, int);
 extern char *elfcore_write_lwpstatus
   (bfd *, char *, int *, long, int, const void *);
 extern char *elfcore_write_register_note

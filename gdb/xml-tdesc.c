@@ -615,7 +615,6 @@ static const struct gdb_xml_element tdesc_elements[] = {
 };
 
 /* Parse DOCUMENT into a target description and return it.  */
-
 static struct target_desc *
 tdesc_parse_xml (const char *document, xml_fetch_another fetcher,
 		 void *fetcher_baton)

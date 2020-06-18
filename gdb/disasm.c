@@ -400,7 +400,7 @@ do_mixed_source_and_assembly_deprecated
   /* If we're on the last line, and it's part of the function,
      then we need to get the end pc in a special way.  */
 
-  if (i == nlines - 1 && le[i].pc < high)
+  if (i == nlines - 1 && le[i].pc < high && le[i].line != 0)
     {
       mle[newlines].line = le[i].line;
       mle[newlines].start_pc = le[i].pc;

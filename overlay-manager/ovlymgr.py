@@ -1136,6 +1136,95 @@ class ParseComRV (gdb.Command):
     def invoke (self, args, from_tty):
         raise RuntimeError ("this command is deprecated, use 'comrv status' instead")
 
+# The class represents a new GDB command 'comrv group <LOC>' that
+# takes a location specifier, as taken by the 'break' command, and
+# reports which groups that location is in.
+class comrv_groups_command (gdb.Command):
+    '''Display the overlay groups a particular location is in.
+
+This command only works once ComRV has been initialised.
+
+Takes a single argument that is a string describing a location in the program
+being debugged, in the same format as the breakpoint command.  This location
+is translated to an address (or multiple addresses), and then the group or
+groups those addresses appear in are listed.'''
+    def __init__ (self):
+        gdb.Command.__init__ (self, "comrv groups", gdb.COMMAND_NONE,
+                              gdb.COMPLETE_LOCATION)
+
+    # If ADDR is inside a multi-group then return a list of all the
+    # storage area addresses that are duplicates of ADDR.  Otherwise
+    # return a single entry list containing just ADDR.
+    def _expand_mg_addresses (self, addr, ovly_data):
+        # If we have multi-groups in this program, we need to expand
+        # them now and figure out if our address is in any of them.
+        for i in range (0, ovly_data.multi_group_count ()):
+            mg = ovly_data.multi_group (i)
+            for m in mg.members:
+                low = m.overlay_group.base_address () + m.offset
+                high = low + mg.size_in_bytes
+                if (addr >= low and addr < high):
+                    # Is in this multi-group!
+                    offset = addr - low
+                    return map (
+                        lambda x : (x.overlay_group.base_address ()
+                                    + x.offset + offset),
+                        mg.members)
+
+        # Not in any multi-groups.
+        return [addr]
+
+    # Find an overlay group containing ADDR and return it, otherwise, return
+    # None.
+    def _find_group (self, ovly_data, addr):
+        for grp_num in range (0, ovly_data.group_count ()):
+            grp = ovly_data.group (grp_num)
+            if (addr >= grp.base_address ()
+                and addr < (grp.base_address () + grp.size_in_bytes ())):
+                return (grp, grp_num)
+        return (None, None)
+
+    def invoke (self, args, from_tty):
+        ovly_data = overlay_data.fetch ()
+        if (not ovly_data.comrv_initialised ()):
+            print ("ComRV not yet initialisd:")
+
+        if (args == ""):
+            raise RuntimeError ("missing location argument");
+        (junk,sal) = gdb.decode_line (args)
+        if (junk != None):
+            raise RuntimeError ("junk at end of line: %s" % (junk))
+
+        print ("%-12s%-7s%-12s%-12s%-8s%-8s"
+               % ("", "Group", "Group", "Group", "Group", ""))
+        print ("%-12s%-7s%-12s%-12s%-8s%-8s"
+               % ("Address", "Number", "Start", "End", "Size", "Offset"))
+        for s in (sal):
+            pc = s.pc
+            if (pc >= ovly_data.storage ().start_address ()
+                and pc < ovly_data.storage ().end_address ()):
+                all_addresses = self._expand_mg_addresses (pc, ovly_data)
+                for addr in (all_addresses):
+                    # Figure out which overlay group address ADDR is in.
+                    (grp, idx) = self._find_group (ovly_data, addr)
+                    if (grp == None):
+                        print ("0x%-10x\t** not in an overlay group **"
+                               % (addr))
+                    else:
+                        print ("0x%-10x%-7d0x%-10x0x%-10x0x%-6x0x%-6x"
+                               % (addr, idx, grp.base_address (),
+                                  (grp.base_address () + grp.size_in_bytes ()),
+                                  grp.size_in_bytes (),
+                                  (addr - grp.base_address ())))
+            else:
+                print ("0x%-10x\t** is not in overlay storage area **"
+                       % (pc))
+
+        # Discard the cached cache data, incase we ran this command at the
+        # wrong time and the cache information is invalid.  This will force
+        # GDB to reload the information each time this command is run.
+        overlay_data.clear ()
+
 class MyOverlayManager (gdb.OverlayManager):
     def __init__ (self):
         gdb.OverlayManager.__init__ (self, True)
@@ -1654,6 +1743,7 @@ ParseComRV ()
 comrv_prefix_command ()
 comrv_status_command ()
 comrv_stack_command ()
+comrv_groups_command ()
 
 # Create an instance of the overlay manager class.
 MyOverlayManager ()

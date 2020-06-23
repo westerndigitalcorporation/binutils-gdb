@@ -7211,6 +7211,15 @@ breakpoint_adjustment_warning (CORE_ADDR from_addr, CORE_ADDR to_addr,
   char astr1[64];
   char astr2[64];
 
+  /* If this breakpoint was "adjusted" from the overlay storage region to
+     the overlay cache region, inline with the current overlay mapping
+     scheme, then this is just GDB handling the overlay breakpoint as we
+     expect.  Lets not bombard the user with unnecessary warnings.  */
+  CORE_ADDR cache_addr;
+  if (overlay_manager_is_storage_address (from_addr, &cache_addr)
+      && to_addr == cache_addr)
+    return;
+
   strcpy (astr1, hex_string_custom ((unsigned long) from_addr, 8));
   strcpy (astr2, hex_string_custom ((unsigned long) to_addr, 8));
   if (have_bnum)

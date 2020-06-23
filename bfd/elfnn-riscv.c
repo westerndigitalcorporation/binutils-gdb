@@ -181,6 +181,9 @@ struct riscv_elf_link_hash_table
   bfd_boolean ovl_tables_populated;
 };
 
+/* A flag noting whether the gc mark and sweep pass has run, and therefore can
+   reliably determine which functions should be treated as deleted.  */
+static bfd_boolean comrv_use_gcmark = 0;
 
 /* Get the RISC-V ELF linker hash table from a link_info structure.  */
 #define riscv_elf_hash_table(p) \
@@ -625,18 +628,77 @@ ovl_update_group (struct ovl_group_list *list,
   return TRUE;
 }
 
+/* For a function in the overlay grouping file, return whether this is a valid
+   function, or whether it should be skipped (either because it doesn't exist,
+   or GC sections has removed it.) If a function is being ignored, REASON is
+   updated to provide a reason why.  */
+
+static bfd_boolean
+ovl_enable_grouping_for_func (const char *func, struct bfd_link_info *info,
+			      char **reason)
+{
+  char *sec_name;
+  bfd *ibfd;
+
+  if (func == NULL)
+    return FALSE;
+
+  /* Search for a section for this symbol, and check whether the function
+     has been deleted.  */
+  sec_name = malloc(11 + strlen(func));
+  sprintf (sec_name, ".ovlinput.%s", func);
+  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+    {
+      asection *sec;
+
+      if (! is_riscv_elf (ibfd))
+	continue;
+
+      for (sec = ibfd->sections; sec != NULL; sec = sec->next)
+	{
+	  if (strcmp(sec->name, sec_name) == 0)
+	    {
+              free(sec_name);
+              /* If GC sections not in use, return TRUE to indicate found. */
+	      if (!comrv_use_gcmark)
+		return TRUE;
+	      /* Otherwise return the GC Mark value */
+	      if (sec->gc_mark == 1)
+		return TRUE;
+	      *reason = "section removed by gc-sections";
+	      return FALSE;
+	    }
+	}
+    }
+
+  /* The function was not found, return FALSE to not create its entry.  */
+  free (sec_name);
+  *reason = "section not found";
+  return FALSE;
+}
+
 /* Parse a line from the overlay grouping csv and insert into hash table.  */
 
 static bfd_boolean
 riscv_parse_grouping_line (char * line, struct bfd_hash_table *ovl_func_table,
-			   struct ovl_group_list *ovl_group_list)
+			   struct ovl_group_list *ovl_group_list,
+                           struct bfd_link_info *info)
 {
-  char *group_str, *endptr, *func;
+  char *group_str, *endptr, *func, *reason;
   bfd_vma group;
   int group_cnt = 0;
 
   /* Parse function name.  */
   func = strtok (line, ",");
+
+  /* Skip functions which have been garbage collected, they should not appear
+     in any group.  */
+  if (!ovl_enable_grouping_for_func (func, info, &reason))
+    {
+      _bfd_error_handler (_("%pB: warning: Ignoring '%s' in overlay grouping "
+			    "file: %s\n"), info->output_bfd, func, reason);
+      return TRUE;
+    }
 
   /* Parse group ids.  */
   while ((group_str = strtok (NULL, ",")) != NULL)
@@ -692,7 +754,8 @@ riscv_parse_grouping_line (char * line, struct bfd_hash_table *ovl_func_table,
 static bfd_boolean
 parse_grouping_file (FILE * f,
                      struct bfd_hash_table *ovl_func_table,
-                     struct ovl_group_list *ovl_group_list)
+                     struct ovl_group_list *ovl_group_list,
+		     struct bfd_link_info *info)
 {
   int c;
   int i = 0;
@@ -718,7 +781,7 @@ parse_grouping_file (FILE * f,
 	    {
 	      line[i++] = '\0';
 	      if (!riscv_parse_grouping_line (line, ovl_func_table,
-	                                      ovl_group_list))
+					      ovl_group_list, info))
 	        {
 		  free(line);
 		  return FALSE;
@@ -770,21 +833,6 @@ create_ovl_group_table (struct bfd_hash_table *ovl_func_table,
       bfd_set_error (bfd_error_bad_value);
       //ovl_group_list_free (ovl_group_list);
       return FALSE;
-    }
-
-  if (riscv_grouping_file != NULL)
-    {
-      ret = parse_grouping_file (riscv_grouping_file, ovl_func_table,
-                                 ovl_group_list);
-      if (!ret)
-	{
-	  _bfd_error_handler (_("Failed to create overlay grouping table"));
-	  bfd_set_error (bfd_error_bad_value);
-	  bfd_hash_table_free (ovl_func_table);
-	  return FALSE;
-	}
-      *ovl_tables_populated = TRUE;
-      fclose (riscv_grouping_file);
     }
 
   return ret;
@@ -1600,6 +1648,10 @@ riscv_elf_gc_mark_hook (asection *sec,
 			struct elf_link_hash_entry *h,
 			Elf_Internal_Sym *sym)
 {
+  /* Note that gc-sections has been used, allowing some ComRV table generation
+     to be skipped for dead functions (i.e. sec->gc_mark is reliable).  */
+  comrv_use_gcmark = 1;
+
   if (h != NULL)
     switch (ELFNN_R_TYPE (rel->r_info))
       {
@@ -2015,6 +2067,23 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
     htab->sovlplt->contents =
 	(unsigned char *)bfd_zalloc (output_bfd, htab->sovlplt->size);
 
+  /* If a grouping file has been provided it, populate the tables with valid
+     entries. */
+  if (!htab->ovl_tables_populated && riscv_grouping_file != NULL)
+    {
+      bfd_boolean ret;
+      ret = parse_grouping_file (riscv_grouping_file, &htab->ovl_func_table,
+				 &htab->ovl_group_list, info);
+      if (!ret)
+	{
+	  _bfd_error_handler (_("Failed to create overlay grouping table"));
+	  bfd_set_error (bfd_error_bad_value);
+	  return FALSE;
+	}
+      htab->ovl_tables_populated = TRUE;
+      fclose (riscv_grouping_file);
+    }
+
   /* If a grouping has not yet been specified, then try calling the
      grouping tool.  */
   if (!htab->ovl_tables_populated && riscv_use_grouping_tool)
@@ -2197,7 +2266,7 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	    }
 	  ret = parse_grouping_file (grouping_tool_out_file,
 	                             &htab->ovl_func_table,
-	                             &htab->ovl_group_list);
+	                             &htab->ovl_group_list, info);
 	  if (!ret)
 	    {
 	      _bfd_error_handler (_("Failed to create overlay grouping "
@@ -2245,6 +2314,10 @@ riscv_elf_overlay_preprocess(bfd *output_bfd ATTRIBUTE_UNUSED, struct bfd_link_i
 	      ovl_func_hash_lookup (&htab->ovl_func_table,
 	                            sym_name, FALSE, FALSE);
 	  if (sym_groups != NULL)
+	    continue;
+
+	  /* Skip the symbol if it has been garbage collected.  */
+	  if (comrv_use_gcmark && !sec->gc_mark)
 	    continue;
 
 	  /* Find the next group which is empty, starting from the
@@ -6539,6 +6612,10 @@ riscv_elf_overlay_sort_value (asection *s, struct bfd_link_info *info)
       /* Future proof against further internal types.  */
       BFD_ASSERT(strncmp(s->name, ".ovlinput.__internal.",
                          strlen(".ovlinput.__internal.")) != 0);
+
+      /* Return an offset of 0 for functions that have been GC'd.  */
+      if (comrv_use_gcmark && !s->gc_mark)
+        return 0;
 
       const char *sym_name = s->name + strlen(".ovlinput.");
 

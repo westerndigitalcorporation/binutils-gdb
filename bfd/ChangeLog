@@ -1,3 +1,8 @@
+2020-06-24  Andrew Burgess  <andrew.burgess@embecosm.com>
+
+	* cpu-riscv.c (riscv_scan): Don't allow shorter matches using the
+	default architecture.
+
 2020-03-16  Alan Modra  <amodra@gmail.com>
 
 	PR 25675

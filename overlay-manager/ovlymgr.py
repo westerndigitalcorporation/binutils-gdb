@@ -258,6 +258,17 @@ def get_symbol_address (label):
     except:
         return None
 
+# Takes TOKEN which is a 32-bit multi-group token and returns the
+# overlay group number extracted from the token.
+def mg_token_group_id (token):
+    return (token >> 1) & 0xffff
+
+# Takes TOKEN which is a 32-bit multi-group token and returns the
+# offset in bytes of the multi-group function within the overlay group
+# identified by this TOKEN.
+def mg_token_func_offset (token):
+    return ((token >> 17) & 0x3ff) * 4
+
 # Class to wrap reading memory.  Provides an API for reading unsigned
 # values of various sizes from memory.
 class mem_reader:
@@ -332,15 +343,39 @@ class overlay_data:
         def size_in_bytes (self):
             return self._size_in_bytes
 
-    # Holds information about a single multi-group.
+    # Holds information about a single member of a multi-group.
+    class _overlay_multi_group_member:
+        def __init__ (self, overlay_group, token):
+            self._overlay_group = overlay_group
+            self._token = token
+
+        @property
+        def token (self):
+            return self._token
+
+        @property
+        def overlay_group (self):
+            return self._overlay_group
+
+    # Holds information about a single multi-group.  NUMBER is
+    # assigned to each multi-group in the order they are encountered
+    # in the multi-group table, with 0 assigned to the first
+    # multi-group, then 1, etc.
+    #
+    # The INDEX is the index into the multi-group table for the first
+    # token of that multi-group, so the first multi-group always has
+    # index 0, but the second multi-group could have any index value.
+    #
+    # The MEMBERS is the list of multi-group member objects.
     class _overlay_multi_group:
-        def __init__ (self, number, index, tokens):
+        def __init__ (self, number, index, members):
             self._number = number
             self._index = index
-            self._tokens = tokens
+            self._members = members
 
         def tokens (self):
-            return self._tokens
+            return map (lambda m : m.token,
+                        self._members)
 
         def index (self):
             return self._index
@@ -548,7 +583,7 @@ class overlay_data:
 
             return groups
 
-        def _load_overlay_multi_groups (table_start, table_end):
+        def _load_overlay_multi_groups (table_start, table_end, overlay_groups):
             multi_groups = list ()
             all_tokens = list ()
 
@@ -589,10 +624,17 @@ class overlay_data:
                     # Finalise this multi-group, and prepare to parse the
                     # next.
                     else:
+                        def token_to_member (token):
+                            g = mg_token_group_id (token)
+                            og = overlay_groups[g]
+                            return overlay_data.\
+                                _overlay_multi_group_member (og, token)
+
+                        mg_members = map (token_to_member, mg_tokens)
                         multi_groups.append (overlay_data.
                                              _overlay_multi_group (mg_num,
                                                                    mg_idx,
-                                                                   mg_tokens))
+                                                                   mg_members))
                         # Now reset ready to read the next multi-group.
                         mg_num += 1
                         mg_idx = idx
@@ -617,7 +659,7 @@ class overlay_data:
             table_end = table_start + table_size
             table_start += multi_group_offset
             multi_groups, all_tokens \
-                = _load_overlay_multi_groups (table_start, table_end)
+                = _load_overlay_multi_groups (table_start, table_end, groups)
         else:
             multi_groups = list ()
             all_tokens = list ()
@@ -844,8 +886,8 @@ def print_current_comrv_state ():
                 print ("  %-6s%-7s%-12s%-9s%-8s"
                        % ("---", "---", "---", "---", "---"))
             for token in mg.tokens ():
-                g = (token >> 1) & 0xffff
-                offset = ((token >> 17) & 0x3ff) * 4
+                g = mg_token_group_id (token)
+                offset = mg_token_func_offset (token)
                 print ("  %-6d%-7d0x%08x  %-9d0x%-8x"
                        % (grp_num, mg.index (), token, g, offset))
     else:
@@ -1083,8 +1125,8 @@ class MyOverlayManager (gdb.OverlayManager):
         res = list ()
         mg = ovly_data.multi_group (id)
         for token in mg.tokens ():
-            g = (token >> 1) & 0xffff
-            offset = ((token >> 17) & 0x3ff) * 4
+            g = mg_token_group_id (token)
+            offset = mg_token_func_offset (token)
             addr = self.get_group_storage_area_address (g)
             addr += offset
             res.append (addr)
@@ -1173,8 +1215,8 @@ class MyOverlayManager (gdb.OverlayManager):
             multi_group_id = (token >> 1) & 0xffff
             token = ovly_data.get_token_from_multi_group_table (multi_group_id)
 
-        group_id = (token >> 1) & 0xffff
-        func_offset = ((token >> 17) & 0x3ff) * 4;
+        group_id = mg_token_group_id (token)
+        func_offset = mg_token_func_offset (token)
 
         ba = self.get_group_storage_area_address (group_id);
         addr = ba + func_offset;

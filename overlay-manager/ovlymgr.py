@@ -333,9 +333,10 @@ class overlay_data:
 
     # Holds information about a single group.
     class _overlay_group:
-        def __init__ (self, base_address, size_in_bytes):
+        def __init__ (self, base_address, size_in_bytes, id):
             self._base_address = base_address
             self._size_in_bytes = size_in_bytes
+            self._id = id
 
         def base_address (self):
             return self._base_address
@@ -343,11 +344,16 @@ class overlay_data:
         def size_in_bytes (self):
             return self._size_in_bytes
 
+        @property
+        def id (self):
+            return self._id
+
     # Holds information about a single member of a multi-group.
     class _overlay_multi_group_member:
         def __init__ (self, overlay_group, token):
             self._overlay_group = overlay_group
             self._token = token
+            self._offset = mg_token_func_offset (token)
 
         @property
         def token (self):
@@ -356,6 +362,10 @@ class overlay_data:
         @property
         def overlay_group (self):
             return self._overlay_group
+
+        @property
+        def offset (self):
+            return self._offset
 
     # Holds information about a single multi-group.  NUMBER is
     # assigned to each multi-group in the order they are encountered
@@ -373,6 +383,7 @@ class overlay_data:
             self._index = index
             self._members = members
 
+        @property
         def tokens (self):
             return map (lambda m : m.token,
                         self._members)
@@ -382,6 +393,10 @@ class overlay_data:
 
         def number (self):
             return self._number
+
+        @property
+        def members (self):
+            return self._members
 
     # A class to describe an area of memory.  This serves as a base
     # class for the cache region descriptor, and the storage region
@@ -577,7 +592,8 @@ class overlay_data:
                 # object to represent it.
                 size = next_offset - prev_offset
                 groups.append (overlay_data.
-                               _overlay_group (storage_start + prev_offset, size))
+                               _overlay_group (storage_start + prev_offset,
+                                               size, grp))
                 grp += 1
                 prev_offset = next_offset
 
@@ -885,11 +901,10 @@ def print_current_comrv_state ():
             else:
                 print ("  %-6s%-7s%-12s%-9s%-8s"
                        % ("---", "---", "---", "---", "---"))
-            for token in mg.tokens ():
-                g = mg_token_group_id (token)
-                offset = mg_token_func_offset (token)
+            for m in mg.members:
                 print ("  %-6d%-7d0x%08x  %-9d0x%-8x"
-                       % (grp_num, mg.index (), token, g, offset))
+                       % (grp_num, mg.index (), m.token,
+                          m.overlay_group.id, m.offset))
     else:
         print ("  Not supported in this ComRV build.")
     print ("")
@@ -1124,11 +1139,8 @@ class MyOverlayManager (gdb.OverlayManager):
             raise RuntimeError ("Multi-group index out of range")
         res = list ()
         mg = ovly_data.multi_group (id)
-        for token in mg.tokens ():
-            g = mg_token_group_id (token)
-            offset = mg_token_func_offset (token)
-            addr = self.get_group_storage_area_address (g)
-            addr += offset
+        for m in mg.members:
+            addr = m.overlay_group.base_address () + m.offset
             res.append (addr)
         return res
 

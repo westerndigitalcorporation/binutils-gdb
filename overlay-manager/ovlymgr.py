@@ -258,6 +258,16 @@ def get_symbol_address (label):
     except:
         return None
 
+# Return the gdb.Block of the function containing address ADDR, or
+# None if the block could not be found.
+def function_block_at (addr):
+    block = gdb.current_progspace().block_for_pc(addr)
+    if (block == None or block.global_block == None):
+        return None
+    while (not (block.superblock.is_global or block.superblock.is_static)):
+        block = block.superblock
+    return block
+
 # Takes TOKEN which is a 32-bit multi-group token and returns the
 # overlay group number extracted from the token.
 def mg_token_group_id (token):
@@ -382,11 +392,19 @@ class overlay_data:
     # index 0, but the second multi-group could have any index value.
     #
     # The MEMBERS is the list of multi-group member objects.
+    #
+    # The SIZE is the size in bytes of the function that is the
+    # goal of this multi-group.
+    #
+    # The FUNC is a string, the name of the function this is a
+    # multi-group for, or None if this couldn't be figured out.
     class _overlay_multi_group:
-        def __init__ (self, number, index, members):
+        def __init__ (self, number, index, members, size, func):
             self._number = number
             self._index = index
             self._members = members
+            self._size_in_bytes = size
+            self._function = func
 
         @property
         def tokens (self):
@@ -402,6 +420,14 @@ class overlay_data:
         @property
         def members (self):
             return self._members
+
+        @property
+        def size_in_bytes (self):
+            return self._size_in_bytes
+
+        @property
+        def function_name (self):
+            return self._function
 
     # A class to describe an area of memory.  This serves as a base
     # class for the cache region descriptor, and the storage region
@@ -604,6 +630,26 @@ class overlay_data:
 
             return groups
 
+        def _mg_members_to_func_and_size (id, members):
+            mg_block = None
+            for m in members:
+                addr = m.overlay_group.base_address () + m.offset
+                #size = size_of_function_at (addr)
+                b = function_block_at (addr)
+                if (mg_block == None):
+                    mg_block = b
+                elif (b != None and b != mg_block):
+                    raise RuntimeError ("multiple sizes for multi-group %d" % id)
+            if (mg_block == None):
+                raise RuntimeError ("unable to find size of multi-group %d" % id)
+            mg_name = None
+            mg_size = None
+            if (mg_block != None):
+                if (mg_block.function != None):
+                    mg_name = mg_block.function.name
+                mg_size = mg_block.end - mg_block.start
+            return (mg_name, mg_size)
+
         def _load_overlay_multi_groups (table_start, table_end, overlay_groups):
             multi_groups = list ()
             all_tokens = list ()
@@ -652,10 +698,12 @@ class overlay_data:
                                 _overlay_multi_group_member (og, token)
 
                         mg_members = map (token_to_member, mg_tokens)
-                        multi_groups.append (overlay_data.
-                                             _overlay_multi_group (mg_num,
-                                                                   mg_idx,
-                                                                   mg_members))
+                        (mg_func, mg_size) \
+                            = _mg_members_to_func_and_size (mg_num, mg_members)
+                        multi_groups.append \
+                            (overlay_data._overlay_multi_group \
+                             (mg_num, mg_idx, mg_members, mg_size,
+                              mg_func))
                         # Now reset ready to read the next multi-group.
                         mg_num += 1
                         mg_idx = idx
@@ -899,17 +947,21 @@ def print_current_comrv_state ():
         for grp_num in range (0, ovly_data.multi_group_count ()):
             mg = ovly_data.multi_group (grp_num)
             if (grp_num == 0):
-                print ("  %6s%-7s%-12s%-9s%-8s"
-                       % ("", "", "", "Overlay", "Function"))
-                print ("  %-6s%-7s%-12s%-9s%-8s"
-                       % ("Num", "Index", "Token", "Group", "Offset"))
+                print ("  %6s%-7s%-12s%-9s%-10s%-10s%-10s"
+                       % ("", "", "", "Overlay", "Function",
+                          "Function", "Function"))
+                print ("  %-6s%-7s%-12s%-9s%-10s%-10s%-10s"
+                       % ("Num", "Index", "Token", "Group", "Offset",
+                          "Size", "Name"))
             else:
-                print ("  %-6s%-7s%-12s%-9s%-8s"
-                       % ("---", "---", "---", "---", "---"))
+                print ("  %-6s%-7s%-12s%-9s%-10s%-10s%-10s"
+                       % ("---", "---", "---", "---", "---", "---",
+                          "---"))
             for m in mg.members:
-                print ("  %-6d%-7d0x%08x  %-9d0x%-8x"
+                print ("  %-6d%-7d0x%08x  %-9d0x%-8x0x%-8x%s"
                        % (grp_num, mg.index (), m.token,
-                          m.overlay_group.id, m.offset))
+                          m.overlay_group.id, m.offset,
+                          mg.size_in_bytes, mg.function_name))
     else:
         print ("  Not supported in this ComRV build.")
     print ("")

@@ -269,6 +269,11 @@ def mg_token_group_id (token):
 def mg_token_func_offset (token):
     return ((token >> 17) & 0x3ff) * 4
 
+# Takes TOKEN which is a 32-bit multi-group token and returns true if
+# TOKEN is a multi-group token, otherwise, returns false.
+def is_multi_group_token_p (token):
+    return ((token >> 31) & 0x1) == 1
+
 # Class to wrap reading memory.  Provides an API for reading unsigned
 # values of various sizes from memory.
 class mem_reader:
@@ -1223,7 +1228,7 @@ class MyOverlayManager (gdb.OverlayManager):
           # address.
           return token;
 
-        if ((token >> 31) & 0x1) == 1:
+        if is_multi_group_token_p (token):
             multi_group_id = (token >> 1) & 0xffff
             token = ovly_data.get_token_from_multi_group_table (multi_group_id)
 
@@ -1299,7 +1304,7 @@ class comrv_unwinder (Unwinder):
                                     + str (prev_frame.token ()))
 
             token = prev_frame.token ()
-            if (((token >> 31) & 0x1) == 0x1):
+            if is_multi_group_token_p (token):
                 if (prev_frame.multi_group_index () == -1):
                     raise RuntimeError ("mutli-group stack token with no valid token index")
                 idx = prev_frame.multi_group_index ()

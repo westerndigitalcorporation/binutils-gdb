@@ -587,6 +587,16 @@ static struct cmd_list_element *breakpoint_set_cmdlist;
 static struct cmd_list_element *breakpoint_show_cmdlist;
 struct cmd_list_element *save_cmdlist;
 
+/* Called to sort the global BP_LOCATIONS list.  This must never be called
+   when we are inside on of the location list iterators.  */
+
+static void
+resort_bp_locations ()
+{
+  std::sort (bp_locations, bp_locations + bp_locations_count,
+             bp_location_is_less_than);
+}
+
 /* See declaration at breakpoint.h.  */
 
 struct breakpoint *
@@ -2522,11 +2532,17 @@ insert_overlay_breakpoint_loc (struct bp_location *bl,
 
      There can be many breakpoint locations pointing at this address.
      We need to make sure the address field of each is updated so that
-     all of the breakpoints correctly appear to be inserted.  */
-  struct bp_location **locp = NULL, **loc2p, *loc;
-  ALL_BP_LOCATIONS_AT_ADDR (loc2p, locp, storage_addr)
+     all of the breakpoints correctly appear to be inserted.
+
+     Note that we can't use ALL_BP_LOCATIONS_AT_ADDR here as the
+     bp_locations list might be temporarily out of order due to the
+     inserting of overlay locations causing the locations address to
+     change.  */
+  struct bp_location *loc, **loc_tmp;
+  ALL_BP_LOCATIONS (loc, loc_tmp)
     {
-      loc = (*loc2p);
+      if (loc->address != storage_addr)
+        continue;
 
       gdb_assert (loc->overlay_target_info.placed_address == 0);
       gdb_assert (loc->address == storage_addr);
@@ -2538,11 +2554,13 @@ insert_overlay_breakpoint_loc (struct bp_location *bl,
   bl->target_info.placed_address = cache_addr;
   bl->target_info.reqstd_address = cache_addr;
 
-  /* It is required that the BP_LOCATIONS list be sorted by the address
-     of the location.  After updating the addresses above we should
-     resort the list now.  */
-  std::sort (bp_locations, bp_locations + bp_locations_count,
-             bp_location_is_less_than);
+  /* Having (possibly) just messed around with the address field of one (or
+     more) locations, then the global location list is now likely unsorted,
+     which is a problem.
+
+     We can't resort the list here as we are currently inside an iterator
+     over the list, however, once the iterator has completed we will resort
+     the list.  */
 
   if (debug_overlay)
     fprintf_unfiltered (gdb_stdlog,
@@ -3029,6 +3047,10 @@ update_inserted_breakpoint_locations (void)
       if (val)
 	error_flag = val;
     }
+  /* Inserting an overlay location can result in the location changing
+     address, and so the location list becoming unsorted.  Resort the list
+     now so we are back in a valid state.  */
+  resort_bp_locations ();
 
   if (error_flag)
     {
@@ -3085,6 +3107,10 @@ insert_breakpoint_locations (void)
       if (val)
 	error_flag = val;
     }
+  /* Inserting an overlay location can result in the location changing
+     address, and so the location list becoming unsorted.  Resort the list
+     now so we are back in a valid state.  */
+  resort_bp_locations ();
 
   /* If we failed to insert all locations of a watchpoint, remove
      them, as half-inserted watchpoint is of limited use.  */
@@ -3121,6 +3147,10 @@ insert_breakpoint_locations (void)
 	  error_flag = -1;
 	}
     }
+  /* Inserting an overlay location can result in the location changing
+     address, and so the location list becoming unsorted.  Resort the list
+     now so we are back in a valid state.  */
+  resort_bp_locations ();
 
   if (error_flag)
     {
@@ -3151,6 +3181,12 @@ remove_breakpoints (void)
     if (bl->inserted && !is_tracepoint (bl->owner))
       val |= remove_breakpoint (bl);
   }
+
+  /* Removing an overlay location can result in the location changing
+     address, and so the location list becoming unsorted.  Resort the list
+     now so we are back in a valid state.  */
+  resort_bp_locations ();
+
   return val;
 }
 
@@ -3831,6 +3867,11 @@ detach_breakpoints (ptid_t ptid)
       val |= remove_breakpoint_1 (bl, DETACH_BREAKPOINT);
   }
 
+  /* Removing an overlay location can result in the location changing
+     address, and so the location list becoming unsorted.  Resort the list
+     now so we are back in a valid state.  */
+  resort_bp_locations ();
+
   return val;
 }
 
@@ -3853,7 +3894,7 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
      STORAGE_ADDR then this breakpoint is no longer mapped in.  */
   if (cache_addr == storage_addr)
     {
-      struct bp_location **locp = NULL, **loc2p, *loc;
+      struct bp_location **locp = NULL, **loc_tmp, *loc;
 
       if (debug_overlay)
         fprintf_unfiltered (gdb_stdlog, "breakpoint %d inserted at %s is "
@@ -3936,11 +3977,17 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
          We need to make sure the address field of each is reset now that
          the breakpoint mapping is removed.  As we are about the modify the
          address field, we must cache the original value before using the
-         iterator macro.  */
+         iterator macro.
+
+         Note that we can't use ALL_BP_LOCATIONS_AT_ADDR here as the
+         bp_locations list might be temporarily out of order due to the
+         inserting of overlay locations causing the locations address to
+         change.  */
       CORE_ADDR tmp = bl->address;
-      ALL_BP_LOCATIONS_AT_ADDR (loc2p, locp, tmp)
+      ALL_BP_LOCATIONS (loc, loc_tmp)
         {
-          loc = (*loc2p);
+          if (loc->address != tmp)
+            continue;
 
           if (debug_overlay)
             fprintf_unfiltered (gdb_stdlog,
@@ -3955,12 +4002,6 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
           loc->address = loc->overlay_target_info.placed_address;
           loc->overlay_target_info.placed_address = 0;
         }
-
-      /* It is required that the BP_LOCATIONS list be sorted by the address
-         of the location.  After updating the addresses above we should
-         resort the list now.  */
-      std::sort (bp_locations, bp_locations + bp_locations_count,
-                 bp_location_is_less_than);
 
       if (debug_overlay)
         {
@@ -12164,6 +12205,10 @@ update_global_location_list (enum ugll_insert_mode insert_mode)
   /* Last breakpoint location program space that was marked for update.  */
   int last_pspace_num = -1;
 
+  if (debug_overlay)
+    fprintf_unfiltered (gdb_stdlog,
+                        "entering update_global_location_list ----------\n");
+
   /* Used in the duplicates detection below.  When iterating over all
      bp_locations, points to the first bp_location of a given address.
      Breakpoints and watchpoints of different types are never
@@ -12174,6 +12219,9 @@ update_global_location_list (enum ugll_insert_mode insert_mode)
   struct bp_location *wp_loc_first;  /* hardware watchpoint */
   struct bp_location *awp_loc_first; /* access watchpoint */
   struct bp_location *rwp_loc_first; /* read watchpoint */
+
+  check_locations_are_sorted (bp_locations, bp_locations_count,
+                              __FILE__, __LINE__);
 
   /* Saved former bp_locations array which we compare against the newly
      built bp_locations from the current state of ALL_BREAKPOINTS.  */

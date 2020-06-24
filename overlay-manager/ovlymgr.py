@@ -833,8 +833,7 @@ def print_current_comrv_state ():
     print ("")
     print ("Overlay multi-groups:")
     if (ovly_data.is_multi_group_enabled ()):
-        grp_num = 0
-        while (grp_num < ovly_data.multi_group_count ()):
+        for grp_num in range (0, ovly_data.multi_group_count ()):
             mg = ovly_data.multi_group (grp_num)
             if (grp_num == 0):
                 print ("  %6s%-7s%-12s%-9s%-8s"
@@ -849,7 +848,6 @@ def print_current_comrv_state ():
                 offset = ((token >> 17) & 0x3ff) * 4
                 print ("  %-6d%-7d0x%08x  %-9d0x%-8x"
                        % (grp_num, mg.index (), token, g, offset))
-            grp_num += 1
     else:
         print ("  Not supported in this ComRV build.")
     print ("")

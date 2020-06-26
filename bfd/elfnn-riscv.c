@@ -684,7 +684,9 @@ riscv_parse_grouping_line (char * line, struct bfd_hash_table *ovl_func_table,
 			   struct ovl_group_list *ovl_group_list,
                            struct bfd_link_info *info)
 {
-  char *group_str, *endptr, *func, *reason;
+  char *group_str, *endptr;
+  char *func = NULL;
+  char *reason = NULL;
   bfd_vma group;
   int group_cnt = 0;
 
@@ -695,8 +697,9 @@ riscv_parse_grouping_line (char * line, struct bfd_hash_table *ovl_func_table,
      in any group.  */
   if (!ovl_enable_grouping_for_func (func, info, &reason))
     {
-      _bfd_error_handler (_("%pB: warning: Ignoring '%s' in overlay grouping "
-			    "file: %s\n"), info->output_bfd, func, reason);
+      if (func != NULL && reason != NULL)
+        _bfd_error_handler (_("%pB: warning: Ignoring '%s' in overlay grouping "
+                              "file: %s\n"), info->output_bfd, func, reason);
       return TRUE;
     }
 

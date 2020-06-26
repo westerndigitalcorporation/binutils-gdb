@@ -3281,7 +3281,7 @@ riscv_corefile_thread (struct thread_info *info,
   regcache = get_thread_arch_regcache (info->inf->process_target (),
 				       info->ptid, args->gdbarch);
 
-  for (int regnum = 0; regnum <= RISCV_LAST_REGNUM; ++regnum)
+  for (int regnum = 0; regnum < gdbarch_num_regs (args->gdbarch); ++regnum)
     {
       try
         {

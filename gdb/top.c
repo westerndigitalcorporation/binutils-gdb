@@ -1554,7 +1554,24 @@ This GDB was configured as follows:\n\
              --without-python\n\
 "));
 #endif
-
+#ifdef WITH_PYTHON_LIBDIR
+  fprintf_filtered (stream, _("\
+             --with-python-libdir=%s%s\n\
+"), WITH_PYTHON_LIBDIR, PYTHON_LIBDIR_RELOCATABLE ? " (relocatable)" : "");
+#else
+  fprintf_filtered (stream, _("\
+             --without-python-libdir\n\
+"));
+#endif
+#ifdef WITH_PYTHONHOME_VARIABLE
+  fprintf_filtered (stream, _("\
+             --with-pythonhome-variable=%s\n\
+"), WITH_PYTHONHOME_VARIABLE);
+#else
+  fprintf_filtered (stream, _("\
+             --without-pythonhome-variable\n\
+"));
+#endif
 #if HAVE_LIBDEBUGINFOD
   fprintf_filtered (stream, _("\
              --with-debuginfod\n\

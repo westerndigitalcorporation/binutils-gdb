@@ -6730,8 +6730,10 @@ riscv_elf_overlay_printmap_elfNNlriscv(bfd *obfd,
 	    BFD_ASSERT (func_instance->processed_offset != 0);
 
 	  uint32_t token;
+	  /* If this is a multigroup token, use the cached value, but zero out the
+	     plt bit.  */
 	  if (func->multigroup)
-	    token = func->multigroup_token;
+	    token = func->multigroup_token & 0xf7ffffffU;
 	  else
 	    token = ovltoken (0, 0, func_instance->processed_offset / 4, g_id);
 

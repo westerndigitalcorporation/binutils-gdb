@@ -579,8 +579,26 @@ pyuw_sniffer (const struct frame_unwind *self, struct frame_info *this_frame,
         gdb_assert (value != NULL);
         gdb_assert (data_size == TYPE_LENGTH (value_type (value)));
 
-	cached_frame->reg[i].data = (gdb_byte *) xmalloc (data_size);
-        memcpy (cached_frame->reg[i].data, value_contents (value), data_size);
+        /* If the value passed to us from Python code is not fully
+           available (or optimised out) then we should not error here, as
+           will happen if we call value_contents, but instead mark the
+           register so that pyuw_prev_register will return a value of
+           optimised out.
+
+           This does mean we loose the distinction between optimised out
+           and unavailable, but that's a pretty minor issue.  */
+        if (value_entirely_available (value) && !value_optimized_out (value))
+          {
+            cached_frame->reg[i].data = (gdb_byte *) xmalloc (data_size);
+            memcpy (cached_frame->reg[i].data, value_contents (value), data_size);
+          }
+        else
+          {
+            /* Ensure that this entry will not match in
+               pyuw_prev_register.  */
+            cached_frame->reg[i].num = -1;
+            cached_frame->reg[i].data = NULL;
+          }
       }
   }
 

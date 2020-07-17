@@ -31,7 +31,7 @@
 #include "objfiles.h"
 #include "language.h"
 #include "symtab.h"
-
+#include "overlay.h"
 #include "gdbsupport/version.h"
 
 #include "floatformat.h"
@@ -883,6 +883,10 @@ default_program_breakpoint_here_p (struct gdbarch *gdbarch,
 				   CORE_ADDR address)
 {
   int len;
+
+  if (overlay_manager_is_storage_address (address))
+    return false;
+
   const gdb_byte *bpoint = gdbarch_breakpoint_from_pc (gdbarch, &address, &len);
 
   /* Software breakpoints unsupported?  */

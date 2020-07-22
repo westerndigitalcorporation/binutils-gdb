@@ -55,6 +55,8 @@ OVERLAY_TABLE_ENTRY_LRU_EVICTION_VAL \
     = "g_stComrvCB.stOverlayCache[%d].unLru.stFields.typNextLruIndex"
 OVERLAY_TABLE_ENTRY_LRU_INDEX_VAL \
     = "g_stComrvCB.ucLruIndex"
+OVERLAY_TABLE_ENTRY_MRU_INDEX_VAL \
+    = "g_stComrvCB.ucMruIndex"
 OVERLAY_TABLE_ENTRY_TOKEN_VAL \
     = "g_stComrvCB.stOverlayCache[%d].unToken.uiValue"
 
@@ -930,14 +932,21 @@ class mapped_overlay_group_walker:
             self.eviction_values = []
 
         def read_values(self):
-            # get the lru value
+            # get the lru and mru values
             lru = gdb.parse_and_eval(OVERLAY_TABLE_ENTRY_LRU_INDEX_VAL)
+            mru = gdb.parse_and_eval(OVERLAY_TABLE_ENTRY_MRU_INDEX_VAL)
+            mru = int(mru)
             lru = int(lru)
-            # walk trouogh lru list and save eviction index 
-            while (lru != 255):
-                self.eviction_values.append(lru)
-                lru = gdb.parse_and_eval(OVERLAY_TABLE_ENTRY_LRU_EVICTION_VAL % (lru))
-                lru = int(lru)
+            # this is a case where cache is fully ocupied with one 
+            # group - so lru and mru point to the same location
+            if lru == mru:
+                self.eviction_values.append(0)
+            else:
+                # walk trouogh lru list and save eviction index 
+                while (lru != 255):
+                    self.eviction_values.append(lru)
+                    lru = gdb.parse_and_eval(OVERLAY_TABLE_ENTRY_LRU_EVICTION_VAL % (lru))
+                    lru = int(lru)
 
         def get_eviction_value(self, index):
             return self.eviction_values.index(index)

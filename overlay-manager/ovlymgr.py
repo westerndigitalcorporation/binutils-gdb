@@ -1802,12 +1802,13 @@ class comrv_frame_filter ():
 
             addr = self._frame.address ()
             labels = overlay_data.fetch ().labels ()
-            if (addr <= labels.comrv_invoke_callee):
+            if (addr < labels.comrv_entry_context_switch):
                 token = self._frame.inferior_frame ().read_register ("t5")
             else:
                 # Find the token on the ComRV stack.
                 t3 = self._frame.inferior_frame ().\
                           read_register ("t3").cast (self.uint_t)
+                t3 &= 0xfffffffe
                 ovly_data = overlay_data.fetch ()
                 mg_index_offset = ovly_data.multi_group_index_offset ()
                 comrv_frame = comrv_stack_frame (t3, mg_index_offset)

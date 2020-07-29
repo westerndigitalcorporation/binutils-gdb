@@ -1262,7 +1262,7 @@ Alignment - The alignment field from the ComRV stack, alignment to size of
                           ("0x%08x" % (frame.align ())),
                           ("0x%x" % (frame.offset ()))))
             depth += 1
-            if (frame.offset () == 0xdead):
+            if (frame.offset () == 0xdead or frame.offset () == 0x0):
                 break
             t3_addr += frame.offset ()
 

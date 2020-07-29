@@ -7721,6 +7721,9 @@ enable_overlay_breakpoints (void)
 {
   struct breakpoint *b;
 
+  if (debug_overlay)
+    fprintf_unfiltered (gdb_stdlog, "enable_overlay_breakpoints ()\n");
+
   ALL_BREAKPOINTS (b)
     if (b->type == bp_overlay_event)
     {

@@ -49,21 +49,11 @@ overlay_manager_event_symbol_name ()
 void
 overlay_manager_register (std::unique_ptr <gdb_overlay_manager> mgr)
 {
-  if (registered_overlay_manager != nullptr)
-    {
-      /* Remove all overlay event breakpoints.  The new overlay manager
-	 might place them in a different location.  The overlay event
-	 breakpoints will be created automatically for us the next time we
-	 try to resume the inferior.  */
-      delete_overlay_event_breakpoint ();
-    }
+  delete_overlay_event_breakpoint ();
 
   registered_overlay_manager = std::move (mgr);
 
-  /* Discard all cached overlay state.  */
-
-  /* Finally, ask the new overlay manager to read its internal state and
-     populate our internal data structure.  */
+  create_overlay_event_breakpoint ();
 }
 
 /* TODO: Global current mapping state, should this be stored in the overlay

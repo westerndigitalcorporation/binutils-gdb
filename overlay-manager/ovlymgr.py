@@ -338,21 +338,40 @@ def function_block_at (addr):
         block = block.superblock
     return block
 
-# Takes TOKEN which is a 32-bit multi-group token and returns the
-# overlay group number extracted from the token.
-def mg_token_group_id (token):
-    return (token >> 1) & 0xffff
-
-# Takes TOKEN which is a 32-bit multi-group token and returns the
-# offset in bytes of the multi-group function within the overlay group
-# identified by this TOKEN.
-def mg_token_func_offset (token):
-    return ((token >> 17) & 0x3ff) * 4
+# Takes TOKEN_OR_ADDRESS which could be a 32-bit token, or a valid
+# 32-bit RISC-V code address and returns true if it is a ComRV token,
+# or false if it is a code address.
+#
+# This choice is based on the least-significant bit of the value in
+# TOKEN_OR_ADDRESS, as a valid code address must have the least
+# significant bit set to zero, while ComRV tokens have the least
+# significant bit set to 1.
+def is_overlay_token_p (token_or_address):
+    return ((token_or_address & 0x1) == 1)
 
 # Takes TOKEN which is a 32-bit multi-group token and returns true if
 # TOKEN is a multi-group token, otherwise, returns false.
 def is_multi_group_token_p (token):
+    assert (is_overlay_token_p (token))
     return ((token >> 31) & 0x1) == 1
+
+# Takes TOKEN which is a 32-bit multi-group token and returns the
+# overlay group number extracted from the token.
+def mg_token_group_id (token):
+    assert (is_multi_group_token_p (token))
+    return (token >> 1) & 0xffff
+
+# Takes TOKEN, a non-multi-group token, and extract the group-id from
+# the token.
+def overlay_token_group_id (token):
+    assert (not is_multi_group_token_p (token))
+    return (token >> 1) & 0xffff
+
+# Takes TOKEN, a non-multi-group token, and extract the function
+# offset in bytes for the function referenced by this token.
+def overlay_token_func_offset (token):
+    assert (not is_multi_group_token_p (token))
+    return ((token >> 17) & 0x3ff) * 4
 
 # Class to wrap reading memory.  Provides an API for reading unsigned
 # values of various sizes from memory.
@@ -438,7 +457,7 @@ class overlay_data:
         def __init__ (self, overlay_group, token):
             self._overlay_group = overlay_group
             self._token = token
-            self._offset = mg_token_func_offset (token)
+            self._offset = overlay_token_func_offset (token)
 
         @property
         def token (self):
@@ -765,12 +784,19 @@ class overlay_data:
                     # Finalise this multi-group, and prepare to parse the
                     # next.
                     else:
+                        # Take TOKEN, a non-multi-group token
+                        # extracted from the multi-group table, and
+                        # return a new multi-group member object.
                         def token_to_member (token):
-                            g = mg_token_group_id (token)
+                            g = overlay_token_group_id (token)
                             og = overlay_groups[g]
                             return overlay_data.\
                                 _overlay_multi_group_member (og, token)
 
+                        # Convert MG_TOKENS, a list of all the
+                        # non-multi-group tokens that are within this
+                        # multi-group, into a list of multi-group
+                        # member objects (in MG_MEMBERS).
                         mg_members = map (token_to_member, mg_tokens)
                         (mg_func, mg_size) \
                             = _mg_members_to_func_and_size (mg_num, mg_members)
@@ -1500,17 +1526,19 @@ class MyOverlayManager (gdb.OverlayManager):
 
         token = int (gdb.parse_and_eval ("$t5"))
 
-        if (token & 0x1) == 0:
+        if (not is_overlay_token_p (token)):
           # The callee is a non-overlay function and token is destination
           # address.
           return token;
 
         if is_multi_group_token_p (token):
-            multi_group_id = (token >> 1) & 0xffff
+            multi_group_id = mg_token_group_id (token)
             token = ovly_data.get_token_from_multi_group_table (multi_group_id)
 
-        group_id = mg_token_group_id (token)
-        func_offset = mg_token_func_offset (token)
+        # TOKEN is now a non-multi-group token.
+        assert (not is_multi_group_token_p (token))
+        group_id = overlay_token_group_id (token)
+        func_offset = overlay_token_func_offset (token)
 
         ba = self.get_group_storage_area_address (group_id);
         addr = ba + func_offset;

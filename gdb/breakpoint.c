@@ -3449,6 +3449,8 @@ create_overlay_event_breakpoint (void)
 static void
 handle_overlay_bp_event (void)
 {
+  struct bp_location *bl, **blp_tmp;
+
   target_terminal::scoped_restore_terminal_state term_state;
   target_terminal::ours_for_output ();
 
@@ -3457,11 +3459,23 @@ handle_overlay_bp_event (void)
   overlay_manager_hit_event_breakpoint ();
 
   /* Now we need to ensure that every overlay breakpoint is updated, as its
-     mapping may have changed.  Currently we just remove all breakpoints,
-     and then insert them all again.  We could consider only doing this for
-     overlay breakpoints, but GDB regularly removed and inserts all
-     breakpoints anyway, so trying to optimise this seems pointless.  */
-  remove_breakpoints ();
+     mapping may have changed.  In an attempt to reduce remote traffic we
+     only remove overlay breakpoint locations.  The following insert will
+     have no effect for breakpoints that are already inserted.  */
+
+  ALL_BP_LOCATIONS (bl, blp_tmp)
+  {
+    if (bl->inserted && !is_tracepoint (bl->owner)
+        && overlay_debugging != ovly_off
+        && overlay_manager_is_overlay_breakpoint_loc (bl))
+      remove_breakpoint (bl);
+  }
+
+  /* Removing an overlay location can result in the location changing
+     address, and so the location list becoming unsorted.  Resort the list
+     now so we are back in a valid state.  */
+  resort_bp_locations ();
+
   insert_breakpoints ();
 }
 

@@ -6699,10 +6699,14 @@ process_event_stop_test (struct execution_control_state *ecs)
   gdbarch = get_frame_arch (frame);
   fill_in_stop_func (gdbarch, ecs);
 
+  /* Don't enter the 'skip comrv' code if we are performing a "next" like
+     command.  In this case we will hit the "next" handling logic below
+     which will cause us to return to the caller.  */
   if (skip_ovlmgr
       && ecs->event_thread->control.step_range_end != 1
       && ecs->stop_func_name != 0
-      && ecs->stop_func_start == ecs->event_thread->suspend.stop_pc)
+      && ecs->stop_func_start == ecs->event_thread->suspend.stop_pc
+      && ecs->event_thread->control.step_over_calls != STEP_OVER_ALL)
     {
       symtab_and_line sr_sal;
       /* If we have just entered the overlay manager and skipping is on,
@@ -6715,6 +6719,11 @@ process_event_stop_test (struct execution_control_state *ecs)
 	  sr_sal.section = find_pc_overlay (sr_sal.pc);
 	  sr_sal.pspace = get_frame_program_space (frame);
 	  insert_step_resume_breakpoint_at_sal (gdbarch, sr_sal, null_frame_id);
+
+          if (debug_infrun)
+            fprintf_unfiltered (gdb_stdlog,
+                                "infrun: skipping comrv, destination is %s\n",
+                                paddress (gdbarch, sr_sal.pc));
 
 	  keep_going (ecs);
 	  return;

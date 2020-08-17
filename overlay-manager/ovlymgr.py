@@ -2256,10 +2256,6 @@ class comrv_unwinder (Unwinder):
 
         regs = comrv_disassemble_and_analyse (labels.comrv_entry, pc)
 
-        print ("In unwinder, registers:")
-        for r in regs:
-            print ("  %s: %s" % (r, str (regs[r])))
-
         # Create UnwindInfo.  Usually the frame is identified by the
         # stack pointer and the program counter.  We try to be good
         # and always use the stack pointer as it was at the start of
@@ -2393,10 +2389,6 @@ class comrv_unwinder (Unwinder):
         # but at the start of the block the stack pointer should be correct.
         regs = comrv_disassemble_and_analyse (labels.comrv_igonr_caller_thunk_stack_frame,
                                               pc)
-
-        print ("In unwinder, registers:")
-        for r in regs:
-            print ("  %s: %s" % (r, str (regs[r])))
 
         # Check we understand the current contents of the stack pointer.
         if (regs["sp"].type != "pv_register" or regs["sp"].reg != "sp"):

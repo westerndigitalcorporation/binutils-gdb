@@ -6700,13 +6700,18 @@ process_event_stop_test (struct execution_control_state *ecs)
   fill_in_stop_func (gdbarch, ecs);
 
   /* Don't enter the 'skip comrv' code if we are performing a "next" like
-     command.  In this case we will hit the "next" handling logic below
-     which will cause us to return to the caller.  */
+     command and the frame we started the "next" in is our caller.  In this
+     case we will hit the "next" handling logic below which will cause us
+     to return to the caller.  If the frame we started the "next" in is
+     not our caller then this indicates that we are using "next" to leave
+     a function, in which case we should enter this code to skip comrv.  */
   if (skip_ovlmgr
       && ecs->event_thread->control.step_range_end != 1
       && ecs->stop_func_name != 0
       && ecs->stop_func_start == ecs->event_thread->suspend.stop_pc
-      && ecs->event_thread->control.step_over_calls != STEP_OVER_ALL)
+      && (ecs->event_thread->control.step_over_calls != STEP_OVER_ALL
+          || !frame_id_eq (frame_unwind_caller_id (get_current_frame ()),
+                           ecs->event_thread->control.step_stack_frame_id)))
     {
       symtab_and_line sr_sal;
       /* If we have just entered the overlay manager and skipping is on,

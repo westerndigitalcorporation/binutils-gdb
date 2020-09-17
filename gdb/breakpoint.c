@@ -3454,9 +3454,19 @@ handle_overlay_bp_event (void)
   target_terminal::scoped_restore_terminal_state term_state;
   target_terminal::ours_for_output ();
 
+  if (debug_overlay)
+    fprintf_unfiltered (gdb_stdlog,
+                        "In handle_overlay_bp_event, about to load "
+                        "overlay state\n");
+
   /* Call into the overlay manager to process the event breakpoint.  This
      will update our internal idea of which overlays are mapped in.  */
   overlay_manager_hit_event_breakpoint ();
+
+  if (debug_overlay)
+    fprintf_unfiltered (gdb_stdlog,
+                        "In handle_overlay_bp_event, refreshing "
+                        "breakpoints\n");
 
   /* Now we need to ensure that every overlay breakpoint is updated, as its
      mapping may have changed.  In an attempt to reduce remote traffic we
@@ -3962,8 +3972,18 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
 
           /* Save the memory contents, read enough bytes to ensure we cover
              the longest possible s/w breakpoint on this target (4 for
-             RISC-V).  */
-          val = target_read_memory (addr, readbuf, sizeof (readbuf));
+             RISC-V).
+
+             The use of 4 1-byte loads here was done in an attempt to work
+             around a possible issue with some targets an miss-aligned
+             loads and stores.  It could be that switching to two 2-byte
+             loads (and stores below) would be just as safe, but using
+             single byte load/store seemed like it could be even safer.  */
+          val = 0;
+          val += target_read_memory (addr, &readbuf[0], 1);
+          val += target_read_memory (addr, &readbuf[1], 1);
+          val += target_read_memory (addr, &readbuf[2], 1);
+          val += target_read_memory (addr, &readbuf[3], 1);
           if (val != 0)
             error (_("failed to read target memory during software "
                      "breakpoint removal at %ss"),
@@ -3973,7 +3993,11 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
           target_remove_breakpoint (bl->gdbarch, bp_tgt, reason);
 
           /* Now write back the original memory contents.  */
-          val = target_write_raw_memory (addr, readbuf, sizeof (readbuf));
+          val = 0;
+          val += target_write_raw_memory (addr, &readbuf[0], 1);
+          val += target_write_raw_memory (addr, &readbuf[1], 1);
+          val += target_write_raw_memory (addr, &readbuf[2], 1);
+          val += target_write_raw_memory (addr, &readbuf[3], 1);
           if (val != 0)
             error (_("failed to write target memory during software "
                      "breakpoint removal at %ss"),

@@ -50,6 +50,7 @@
 #include "terminal.h"
 #include <unordered_map>
 #include "target-connection.h"
+#include "overlay.h"
 
 static void generic_tls_error (void) ATTRIBUTE_NORETURN;
 
@@ -1056,6 +1057,24 @@ memory_xfer_partial_1 (struct target_ops *ops, enum target_object object,
 	}
     }
 
+  if (readbuf != NULL && overlay_debugging
+      && overlay_manager_is_storage_address (memaddr))
+    {
+      struct target_section *secp;
+      struct target_section_table *table;
+
+      secp = target_section_by_addr (ops, memaddr);
+      if (secp != NULL)
+	{
+	  table = target_get_section_table (ops);
+	  return section_table_xfer_memory_partial (readbuf, writebuf,
+						    memaddr, len, xfered_len,
+						    table->sections,
+						    table->sections_end,
+						    NULL);
+	}
+    }
+
   /* Try the executable files, if "trust-readonly-sections" is set.  */
   if (readbuf != NULL && trust_readonly)
     {
@@ -1064,7 +1083,8 @@ memory_xfer_partial_1 (struct target_ops *ops, enum target_object object,
 
       secp = target_section_by_addr (ops, memaddr);
       if (secp != NULL
-	  && (bfd_section_flags (secp->the_bfd_section) & SEC_READONLY))
+	  && (bfd_section_flags (secp->the_bfd_section) & SEC_READONLY)
+          && (bfd_section_flags (secp->the_bfd_section) & SEC_ALLOC))
 	{
 	  table = target_get_section_table (ops);
 	  return section_table_xfer_memory_partial (readbuf, writebuf,

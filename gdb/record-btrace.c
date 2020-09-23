@@ -1448,7 +1448,9 @@ record_btrace_target::xfer_partial (enum target_object object,
 	      {
 		/* Check if the section we found is readonly.  */
 		if ((bfd_section_flags (section->the_bfd_section)
-		     & SEC_READONLY) != 0)
+		     & SEC_READONLY) != 0
+                    && (bfd_section_flags (section->the_bfd_section)
+                        & SEC_ALLOC) != 0)
 		  {
 		    /* Truncate the request to fit into this section.  */
 		    len = std::min (len, section->endaddr - offset);

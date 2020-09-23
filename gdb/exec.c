@@ -548,18 +548,12 @@ add_to_section_table (bfd *abfd, struct bfd_section *asect,
 		      void *table_pp_char)
 {
   struct target_section **table_pp = (struct target_section **) table_pp_char;
-  flagword aflag;
 
   gdb_assert (abfd == asect->owner);
 
-  /* Check the section flags, but do not discard zero-length sections, since
-     some symbols may still be attached to this section.  For instance, we
-     encountered on sparc-solaris 2.10 a shared library with an empty .bss
-     section to which a symbol named "_end" was attached.  The address
-     of this symbol still needs to be relocated.  */
-  aflag = bfd_section_flags (asect);
-  if (!(aflag & SEC_ALLOC))
-    return;
+  /* We now allow all sections into the section list, and filter out only
+     the alloctable sections at those places where we only need the
+     alloctable sections.  */
 
   (*table_pp)->owner = NULL;
   (*table_pp)->the_bfd_section = asect;
@@ -840,6 +834,9 @@ section_table_available_memory (CORE_ADDR memaddr, ULONGEST len,
   for (target_section *p = sections; p < sections_end; p++)
     {
       if ((bfd_section_flags (p->the_bfd_section) & SEC_READONLY) == 0)
+	continue;
+
+      if ((bfd_section_flags (p->the_bfd_section) & SEC_ALLOC) == 0)
 	continue;
 
       /* Copy the meta-data, adjusted.  */

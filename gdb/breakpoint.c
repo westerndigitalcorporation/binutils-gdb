@@ -2643,7 +2643,7 @@ insert_bp_location (struct bp_location *bl,
     return 0;
 
   if (debug_overlay)
-    fprintf_unfiltered (gdb_stdlog, "insert_bp_location 0x%p, address: %s\n",
+    fprintf_unfiltered (gdb_stdlog, "insert_bp_location %p, address: %s\n",
                         bl, core_addr_to_string (bl->address));
 
   /* Note we don't initialize bl->target_info, as that wipes out
@@ -2750,7 +2750,7 @@ insert_bp_location (struct bp_location *bl,
               if (debug_overlay)
                 fprintf_unfiltered (gdb_stdlog,
                                     "Insert of overlay location for bp %d "
-                                    "(loc 0x%p) failed\n",
+                                    "(loc %p) failed\n",
                                     bl->owner->number, bl);
               gdb_assert (!bl->inserted);
               return 0;
@@ -12303,7 +12303,7 @@ update_global_location_list (enum ugll_insert_mode insert_mode)
            old_locp < old_locations.get () + old_locations_count;
            old_locp++)
         {
-          fprintf_unfiltered (gdb_stdlog, "\t0x%p: (bp %d) address %s\n",
+          fprintf_unfiltered (gdb_stdlog, "\t%p: (bp %d) address %s\n",
                               (*old_locp),
                               ((*old_locp)->owner->number),
                               core_addr_to_string ((*old_locp)->address));
@@ -12316,7 +12316,7 @@ update_global_location_list (enum ugll_insert_mode insert_mode)
            locXp < bp_locations + bp_locations_count;
            locXp++)
         {
-          fprintf_unfiltered (gdb_stdlog, "\t0x%p: (bp %d) address %s\n",
+          fprintf_unfiltered (gdb_stdlog, "\t%p: (bp %d) address %s\n",
                               (*locXp),
                               ((*locXp)->owner->number),
                               core_addr_to_string ((*locXp)->address));
@@ -12344,7 +12344,7 @@ update_global_location_list (enum ugll_insert_mode insert_mode)
       struct bp_location **loc2p;
 
       if (debug_overlay)
-        fprintf_unfiltered (gdb_stdlog, "  Process location 0x%p, address %s\n",
+        fprintf_unfiltered (gdb_stdlog, "  Process location %p, address %s\n",
                             old_loc, core_addr_to_string (old_loc->address));
 
       /* Tells if 'old_loc' is found among the new locations.  If
@@ -12367,7 +12367,7 @@ update_global_location_list (enum ugll_insert_mode insert_mode)
 	{
           if (debug_overlay)
             fprintf_unfiltered (gdb_stdlog,
-                                "    checking against loc 0x%p, address: %s\n",
+                                "    checking against loc %p, address: %s\n",
                                 (*loc2p), core_addr_to_string ((*loc2p)->address));
 	  /* Check if this is a new/duplicated location or a duplicated
 	     location that had its condition modified.  If so, we want to send
@@ -12571,12 +12571,20 @@ update_global_location_list (enum ugll_insert_mode insert_mode)
      Do the same for hardware watchpoints, but also considering the
      watchpoint's type (regular/access/read) and length.  */
 
+  if (debug_overlay)
+    fprintf_unfiltered (gdb_stdlog,
+                        "Checking for breakpoints at duplicate addresses:\n");
+
   bp_loc_first = NULL;
   wp_loc_first = NULL;
   awp_loc_first = NULL;
   rwp_loc_first = NULL;
   ALL_BP_LOCATIONS (loc, locp)
     {
+      if (debug_overlay)
+        fprintf_unfiltered (gdb_stdlog, "  location address %s\n",
+                            core_addr_to_string (loc->address));
+
       /* ALL_BP_LOCATIONS bp_location has LOC->OWNER always
 	 non-NULL.  */
       struct bp_location **loc_first_p;
@@ -12607,6 +12615,16 @@ update_global_location_list (enum ugll_insert_mode insert_mode)
 	  || (overlay_debugging && loc->section != (*loc_first_p)->section)
 	  || !breakpoint_locations_match (loc, *loc_first_p))
 	{
+          if (debug_overlay)
+            {
+              fprintf_unfiltered (gdb_stdlog, "    is first b/p at this address\n");
+              if (*loc_first_p == NULL)
+                fprintf_unfiltered (gdb_stdlog, "      due to no previous location\n");
+              if (*loc_first_p != NULL
+                  && !breakpoint_locations_match (loc, *loc_first_p))
+                fprintf_unfiltered (gdb_stdlog, "      due to location change\n");
+            }
+
 	  *loc_first_p = loc;
 	  loc->duplicate = 0;
 

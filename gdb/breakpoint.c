@@ -12612,7 +12612,9 @@ update_global_location_list (enum ugll_insert_mode insert_mode)
 	loc_first_p = &bp_loc_first;
 
       if (*loc_first_p == NULL
-	  || (overlay_debugging && loc->section != (*loc_first_p)->section)
+          /* This section change check is only relevant to the old way of
+             doing overlays.  Remove it for the ComRV overlay scheme.  */
+	  /* || (overlay_debugging && loc->section != (*loc_first_p)->section) */
 	  || !breakpoint_locations_match (loc, *loc_first_p))
 	{
           if (debug_overlay)

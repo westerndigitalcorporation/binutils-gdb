@@ -3960,7 +3960,6 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
 
           struct bp_target_info *bp_tgt = &bl->target_info;
           CORE_ADDR addr = bp_tgt->placed_address;
-          gdb_byte readbuf[4];
           int val;
 
           if (debug_overlay)
@@ -3970,20 +3969,19 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
                                 bl->owner->number,
                                 core_addr_to_string (addr));
 
-          /* Save the memory contents, read enough bytes to ensure we cover
-             the longest possible s/w breakpoint on this target (4 for
-             RISC-V).
+          /* Save the memory contents that are covered by this breakpoint
+             directly into the shadow buffer for this breakpoint.  Then,
+             when we try to remove the breakpoint we will but back the
+             current contents.
 
-             The use of 4 1-byte loads here was done in an attempt to work
-             around a possible issue with some targets an miss-aligned
-             loads and stores.  It could be that switching to two 2-byte
-             loads (and stores below) would be just as safe, but using
-             single byte load/store seemed like it could be even safer.  */
-          val = 0;
-          val += target_read_memory (addr, &readbuf[0], 1);
-          val += target_read_memory (addr, &readbuf[1], 1);
-          val += target_read_memory (addr, &readbuf[2], 1);
-          val += target_read_memory (addr, &readbuf[3], 1);
+             We can't write directly into the shadow contents buffer, this
+             is checked for in the read logic, so instead write into a
+             temporary buffer and then copy into the shadow buffer.  */
+          {
+            size_t len = bp_tgt->shadow_len;
+            scoped_restore_tmpl<int> restore (&bp_tgt->shadow_len, 0);
+            val = target_read_memory (addr, bp_tgt->shadow_contents, len);
+          }
           if (val != 0)
             error (_("failed to read target memory during software "
                      "breakpoint removal at %ss"),
@@ -3991,17 +3989,6 @@ remove_overlay_breakpoint_location (struct bp_location *bl, enum remove_bp_reaso
 
           /* Remove the s/w breakpoint.  */
           target_remove_breakpoint (bl->gdbarch, bp_tgt, reason);
-
-          /* Now write back the original memory contents.  */
-          val = 0;
-          val += target_write_raw_memory (addr, &readbuf[0], 1);
-          val += target_write_raw_memory (addr, &readbuf[1], 1);
-          val += target_write_raw_memory (addr, &readbuf[2], 1);
-          val += target_write_raw_memory (addr, &readbuf[3], 1);
-          if (val != 0)
-            error (_("failed to write target memory during software "
-                     "breakpoint removal at %ss"),
-                   core_addr_to_string (addr));
 
           if (debug_overlay)
             fprintf_unfiltered (gdb_stdlog,

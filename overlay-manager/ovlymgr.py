@@ -2549,6 +2549,19 @@ MyOverlayManager ()
 
 gdb.execute ("overlay auto", False, False)
 
+# We need to disable use of the 'Z' packet while using overlays.  The
+# problem case is:
+#   1. Breakpoint set using 'z' packet.
+#   2. Overlay group is replaced with a new overlay.
+#   3. GDB want's to remove the overlay using 'Z', but this is not
+#      possible.
+#
+# At step 3 the remote will remove the breakpoint and write back the
+# original memory contents.  Unfortunately the original contents are
+# from the first overlay group, not the new group.
+#
+# It's posible to work around this if we only use memory breakpoints.
+gdb.execute ("set remote software-breakpoint-packet off", False, False)
 
 # This line is commented out, but left in at the request of WD.
 # Turning this packet off will force GDB to make use of read/write

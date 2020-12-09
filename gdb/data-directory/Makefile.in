@@ -68,6 +68,7 @@ SYSCALLS_FILES = gdb-syscalls.dtd freebsd.xml $(GEN_SYSCALLS_FILES)
 PYTHON_DIR = python
 PYTHON_INSTALL_DIR = $(DESTDIR)$(GDB_DATADIR)/$(PYTHON_DIR)
 PYTHON_FILE_LIST = \
+	gdb/ovlymgr.py \
 	gdb/__init__.py \
 	gdb/FrameDecorator.py \
 	gdb/FrameIterator.py \

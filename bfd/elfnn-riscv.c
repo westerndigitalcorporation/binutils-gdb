@@ -2913,7 +2913,7 @@ ovloff (struct bfd_link_info *info, bfd_vma from_plt,
       /* Now find the input section for the target function in this
          group.  */
       char *target_sym_input_sec_name;
-      target_sym_input_sec_name = malloc(12 + strlen(group_list_entry->first_func));
+      target_sym_input_sec_name = malloc(12 + strlen(entry->root.root.string));
       sprintf (target_sym_input_sec_name,
                ".ovlinput.%s", entry->root.root.string);
 

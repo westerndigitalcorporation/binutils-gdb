@@ -267,6 +267,7 @@ add_to_objfile_sections_full (struct bfd *abfd, struct bfd_section *asect,
 			      struct objfile *objfile, int force)
 {
   struct obj_section *section;
+  bool hidden_section = false;
 
   if (!force)
     {
@@ -274,13 +275,14 @@ add_to_objfile_sections_full (struct bfd *abfd, struct bfd_section *asect,
 
       aflag = bfd_section_flags (asect);
       if (!(aflag & SEC_ALLOC))
-	return;
+	hidden_section = true;
     }
 
   section = &objfile->sections[gdb_bfd_section_index (abfd, asect)];
   section->objfile = objfile;
   section->the_bfd_section = asect;
   section->ovly_mapped = 0;
+  section->hidden_section = hidden_section;
 }
 
 static void

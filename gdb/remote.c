@@ -411,6 +411,11 @@ public:
   thread_control_capabilities get_thread_control_capabilities () override
   { return tc_schedlock; }
 
+  struct target_section_table *get_section_table () override
+  {
+    return current_target_sections;
+  }
+
   /* Open a remote connection.  */
   static void open (const char *, int);
 

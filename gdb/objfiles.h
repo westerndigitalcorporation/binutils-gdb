@@ -137,6 +137,13 @@ struct obj_section
 
   /* True if this "overlay section" is mapped into an "overlay region".  */
   int ovly_mapped;
+
+  /* In order to support ComRV we need to track all sections, not just the
+     usual non-empty allocatable sections.  So all sections are added to
+     the per-objfile table, but sections that would not normally be
+     included are marked with HIDDEN_SECTION set to true, these can then
+     be filtered out later.  */
+  bool hidden_section;
 };
 
 /* Relocation offset applied to S.  */
@@ -157,7 +164,15 @@ struct obj_section
 
 #define ALL_OBJFILE_OSECTIONS(objfile, osect)	\
   for (osect = objfile->sections; osect < objfile->sections_end; osect++) \
-    if (osect->the_bfd_section == NULL)					\
+    if (osect->the_bfd_section == NULL || osect->hidden_section)        \
+      {									\
+	/* Nothing.  */							\
+      }									\
+    else
+
+#define ALL_OBJFILE_OSECTIONS_EVEN_HIDDEN_ONES(objfile, osect)	\
+  for (osect = objfile->sections; osect < objfile->sections_end; osect++) \
+    if (osect->the_bfd_section == NULL)                                 \
       {									\
 	/* Nothing.  */							\
       }									\

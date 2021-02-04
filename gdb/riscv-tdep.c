@@ -2967,7 +2967,7 @@ riscv_find_default_target_description (const struct gdbarch_info info)
      this case we fall back to a minimal useful target, 8-byte x-registers,
      with no floating point.  */
   if (features.xlen == 0)
-    features.xlen = 8;
+    features.xlen = info.bfd_arch_info->bits_per_word == 32 ? 4 : 8;
 
   /* Now build a target description based on the feature set.  */
   return riscv_lookup_target_description (features);

@@ -485,6 +485,28 @@ maintenance_info_sections (const char *arg, int from_tty)
       bfd_map_over_sections (core_bfd, print_bfd_section_info,
 			     (void *) &print_data);
     }
+
+  /* Some extra dumping just to help me figure stuff out.  Maybe this
+     should be moved into a separate command 'maint info section-table'?  */
+  struct target_section_table *table = target_get_section_table (current_top_target ());
+  if (table != NULL)
+    {
+      struct target_section *secp;
+
+      printf_filtered (_("Known sections:\n"));
+      for (secp = table->sections; secp < table->sections_end; secp++)
+        {
+          asection *asect = secp->the_bfd_section;
+          CORE_ADDR start_addr = bfd_section_vma (asect);
+          CORE_ADDR end_addr = start_addr + bfd_section_size (asect);
+          int addr_size = gdbarch_addr_bit (target_gdbarch ()) / 8;
+          const char *name = bfd_section_name (asect);
+
+          printf_filtered ("    %s -> %s: %s\n",
+                           hex_string_custom (start_addr, addr_size),
+                           hex_string_custom (end_addr, addr_size), name);
+        }
+    }
 }
 
 static void

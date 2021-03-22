@@ -71,7 +71,7 @@
 # endif
 #endif
 
-#ifndef __glibc_likely
+#if !defined __glibc_likely || !defined __THROWNL
 /* <sys/cdefs.h> either does not exist, or predates glibc commit
    2012-12-28T06:33:01Z!siddhesh@redhat.com
    (91998e449e0ce758db55aecf2abc3ee510fcbc8f)

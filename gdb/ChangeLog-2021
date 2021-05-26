@@ -1,3 +1,9 @@
+2021-05-29  Andrew Burgess  <andrew.burgess@embecosm.com>
+
+	* frame.c (get_prev_frame_if_no_cycle): Always return prev_frame
+	when computing the frame_id for an INLINE_FRAME.  Add an extra
+	assertion.
+
 2021-07-06  Tom de Vries  <tdevries@suse.de>
 
 	* dwarf2/read.c (scan_partial_symbols): Skip top-level imports of

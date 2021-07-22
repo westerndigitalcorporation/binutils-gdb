@@ -2164,8 +2164,13 @@ get_prev_frame_always_1 (struct frame_info *this_frame)
   /* Only try to do the unwind once.  */
   if (this_frame->prev_p)
     {
-      frame_debug_printf ("  -> %s // cached",
-			  this_frame->prev->to_string ().c_str ());
+      if (this_frame->prev != nullptr)
+	frame_debug_printf ("  -> %s // cached",
+			    this_frame->prev->to_string ().c_str ());
+      else
+	frame_debug_printf
+	  ("  -> nullptr // %s // cached",
+	   frame_stop_reason_symbol_string (this_frame->stop_reason));
       return this_frame->prev;
     }
 
